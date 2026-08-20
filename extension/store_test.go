@@ -55,6 +55,34 @@ func TestBlockStoreWaitsForAppliedBlock(t *testing.T) {
 	}
 }
 
+func TestBlockStoreSubscriptionReplaysAndTailsFullEnvelopes(t *testing.T) {
+	store, err := newBlockStore(t.TempDir())
+	require.NoError(t, err)
+	oldMaster := testEnvelope(-1, -1<<63, 99)
+	master := testEnvelope(-1, -1<<63, 100)
+	shard := testEnvelope(0, -1<<63, 42)
+	shard.InclusionMaster = master.Block
+	require.NoError(t, store.put(oldMaster))
+	require.NoError(t, store.put(master))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	events := make(chan *antonv1.AppliedBlock, 2)
+	done := make(chan error, 1)
+	go func() {
+		done <- store.subscribe(ctx, 100, func(event *antonv1.AppliedBlock) error {
+			events <- event
+			return nil
+		})
+	}()
+
+	require.Equal(t, master.EventId, receiveEvent(t, events).EventId)
+	require.NoError(t, store.put(shard))
+	require.Equal(t, shard.EventId, receiveEvent(t, events).EventId)
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+}
+
 func TestProcessedMasterRetainsLatestCommittedBundle(t *testing.T) {
 	dir := t.TempDir()
 	store, err := newBlockStore(dir)
@@ -94,5 +122,16 @@ func testEnvelope(workchain int32, shard int64, seqno uint32) *antonv1.AppliedBl
 			FileHash:  bytes.Repeat([]byte{byte(seqno + 1)}, 32),
 		},
 		BlockBoc: []byte{1},
+	}
+}
+
+func receiveEvent(t *testing.T, events <-chan *antonv1.AppliedBlock) *antonv1.AppliedBlock {
+	t.Helper()
+	select {
+	case event := <-events:
+		return event
+	case <-time.After(time.Second):
+		t.Fatal("subscription did not send an applied block")
+		return nil
 	}
 }

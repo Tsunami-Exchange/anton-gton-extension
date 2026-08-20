@@ -153,6 +153,55 @@ func (s *blockStore) waitMaster(ctx context.Context, seqNo uint32) (*antonv1.App
 	}
 }
 
+func (s *blockStore) subscribe(ctx context.Context, seqNo uint32, send func(*antonv1.AppliedBlock) error) error {
+	sent := make(map[string]struct{})
+	for {
+		events, wake := s.eventsFrom(seqNo)
+		retained := make(map[string]struct{}, len(events))
+		for _, event := range events {
+			key := blockKey(event.Block)
+			if _, ok := sent[key]; !ok {
+				if err := send(event); err != nil {
+					return err
+				}
+			}
+			retained[key] = struct{}{}
+		}
+		sent = retained
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-wake:
+		}
+	}
+}
+
+func (s *blockStore) eventsFrom(seqNo uint32) ([]*antonv1.AppliedBlock, <-chan struct{}) {
+	s.mu.RLock()
+	events := make([]*antonv1.AppliedBlock, 0, len(s.blocks))
+	for _, item := range s.blocks {
+		if inclusionSeqNo(item.event) >= seqNo {
+			events = append(events, proto.Clone(item.event).(*antonv1.AppliedBlock))
+		}
+	}
+	wake := s.wake
+	s.mu.RUnlock()
+
+	sort.Slice(events, func(i, j int) bool {
+		iSeq, jSeq := inclusionSeqNo(events[i]), inclusionSeqNo(events[j])
+		if iSeq != jSeq {
+			return iSeq < jSeq
+		}
+		iMaster, jMaster := isMaster(events[i].Block), isMaster(events[j].Block)
+		if iMaster != jMaster {
+			return !iMaster
+		}
+		return blockKey(events[i].Block) < blockKey(events[j].Block)
+	})
+	return events, wake
+}
+
 func (s *blockStore) latestMaster() *antonv1.AppliedBlock {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

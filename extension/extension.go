@@ -112,6 +112,10 @@ func (s *sourceServer) WaitMaster(ctx context.Context, request *antonv1.MasterRe
 	return event.Block, nil
 }
 
+func (s *sourceServer) SubscribeAppliedBlocks(request *antonv1.MasterRequest, stream grpc.ServerStreamingServer[antonv1.AppliedBlock]) error {
+	return s.store.subscribe(stream.Context(), request.Seqno, stream.Send)
+}
+
 func (s *sourceServer) GetBlock(ctx context.Context, request *antonv1.BlockRequest) (*antonv1.AppliedBlock, error) {
 	if request == nil || validateBlockID(request.Block) != nil {
 		return nil, status.Error(codes.InvalidArgument, "valid block id is required")

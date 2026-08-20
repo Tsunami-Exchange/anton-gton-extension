@@ -5,12 +5,15 @@ extension. The extension writes every applied block to a local durable store
 before returning from the gton hook and serves complete blocks to Anton over
 gRPC.
 
-The data flow is pull-based:
+The data flow is stream-first:
 
 1. `OnBlockApplied` copies the borrowed hook data and fsyncs the block store.
-2. Anton waits for a master block and pulls each full block by ID over gRPC.
-3. Missing or historical blocks fall back to Anton's existing liteservers.
-4. After committing a master block, Anton acknowledges the seqno. The store
+2. The gRPC stream replays stored events and tails new full block envelopes.
+3. Anton caches a full master-and-shard bundle before indexing it, so account
+   states touched by the block do not require separate network calls.
+4. Missing or historical blocks fall back to the unary gRPC API and then to
+   Anton's existing liteservers.
+5. After committing a master block, Anton acknowledges the seqno. The store
    keeps that latest committed master bundle and removes older bundles.
 
 The event contains the raw block and proof BOCs, block identity, inclusion
