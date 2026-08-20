@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package anton.v1;
+
+option go_package = "github.com/tonindexer/anton/api/anton/v1;antonv1";
+
+service BlockSource {
+  rpc LookupMaster(MasterRequest) returns (BlockId);
+  rpc WaitMaster(MasterRequest) returns (BlockId);
+  rpc GetBlock(BlockRequest) returns (AppliedBlock);
+  rpc CurrentMaster(Empty) returns (BlockId);
+  rpc ProcessedMaster(ProcessedMasterRequest) returns (Empty);
+}
+
+message Empty {}
+
+message MasterRequest {
+  uint32 seqno = 1;
+}
+
+message BlockRequest {
+  BlockId block = 1;
+}
+
+message ProcessedMasterRequest {
+  uint32 seqno = 1;
+}
+
+message BlockId {
+  int32 workchain = 1;
+  int64 shard = 2;
+  uint32 seqno = 3;
+  bytes root_hash = 4;
+  bytes file_hash = 5;
+}
+
+message AccountState {
+  int32 workchain = 1;
+  bytes address = 2;
+  bool exists = 3;
+  bytes state_boc = 4;
+  uint64 last_transaction_lt = 5;
+  bytes last_transaction_hash = 6;
+}
+
+message AppliedBlock {
+  string event_id = 1;
+  BlockId block = 2;
+  BlockId inclusion_master = 3;
+  bytes block_boc = 4;
+  bytes proof_boc = 5;
+  repeated BlockId shards = 6;
+  repeated AccountState accounts = 7;
+  bytes blockchain_config_boc = 8;
+  bytes global_libraries_boc = 9;
+  int64 observed_at_unix_milli = 10;
+}

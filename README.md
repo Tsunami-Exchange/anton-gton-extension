@@ -1,0 +1,43 @@
+# Anton gton extension
+
+This repository builds a gton node binary with an Anton block-source
+extension. The extension writes every applied block to a local durable store
+before returning from the gton hook and serves complete blocks to Anton over
+gRPC.
+
+The data flow is pull-based:
+
+1. `OnBlockApplied` copies the borrowed hook data and fsyncs the block store.
+2. Anton waits for a master block and pulls each full block by ID over gRPC.
+3. Missing or historical blocks fall back to Anton's existing liteservers.
+4. After committing a master block, Anton acknowledges the seqno. The store
+   keeps that latest committed master bundle and removes older bundles.
+
+The event contains the raw block and proof BOCs, block identity, inclusion
+master, master shard list, all transaction-account states, blockchain config,
+and global libraries. Anton keeps its liteclient as a fallback for history and
+for related contracts not touched by the block.
+
+## Versions
+
+The repositories intentionally have independent dependency graphs:
+
+- Anton: Go 1.24, tonutils-go 1.13.
+- This extension: Go 1.26, gton 0.7, gton's tonutils-go version.
+
+## Build
+
+    make build
+
+## Configuration
+
+- `GTON_GRPC_LISTEN` — gRPC listen address; defaults to
+  `127.0.0.1:50051`.
+- `GTON_BLOCK_DIR` — durable block directory; defaults to
+  `./data/anton-blocks`.
+
+Start Anton with `GTON_SOURCE_ADDR=127.0.0.1:50051`. If Anton runs in another
+container, explicitly set `GTON_GRPC_LISTEN=:50051` and keep both services on a
+trusted private network; the transport does not provide TLS or authentication.
+
+The protobuf contract is mirrored from Anton's api/anton/v1/ingest.proto.
