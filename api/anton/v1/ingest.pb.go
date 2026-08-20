@@ -501,11 +501,12 @@ const file_api_anton_v1_ingest_proto_rawDesc = "" +
 	"\x15blockchain_config_boc\x18\b \x01(\fR\x13blockchainConfigBoc\x120\n" +
 	"\x14global_libraries_boc\x18\t \x01(\fR\x12globalLibrariesBoc\x123\n" +
 	"\x16observed_at_unix_milli\x18\n" +
-	" \x01(\x03R\x13observedAtUnixMilli2\xba\x02\n" +
+	" \x01(\x03R\x13observedAtUnixMilli2\x87\x03\n" +
 	"\vBlockSource\x12:\n" +
 	"\fLookupMaster\x12\x17.anton.v1.MasterRequest\x1a\x11.anton.v1.BlockId\x128\n" +
 	"\n" +
-	"WaitMaster\x12\x17.anton.v1.MasterRequest\x1a\x11.anton.v1.BlockId\x12:\n" +
+	"WaitMaster\x12\x17.anton.v1.MasterRequest\x1a\x11.anton.v1.BlockId\x12K\n" +
+	"\x16SubscribeAppliedBlocks\x12\x17.anton.v1.MasterRequest\x1a\x16.anton.v1.AppliedBlock0\x01\x12:\n" +
 	"\bGetBlock\x12\x16.anton.v1.BlockRequest\x1a\x16.anton.v1.AppliedBlock\x123\n" +
 	"\rCurrentMaster\x12\x0f.anton.v1.Empty\x1a\x11.anton.v1.BlockId\x12D\n" +
 	"\x0fProcessedMaster\x12 .anton.v1.ProcessedMasterRequest\x1a\x0f.anton.v1.EmptyB2Z0github.com/tonindexer/anton/api/anton/v1;antonv1b\x06proto3"
@@ -540,16 +541,18 @@ var file_api_anton_v1_ingest_proto_depIdxs = []int32{
 	5,  // 4: anton.v1.AppliedBlock.accounts:type_name -> anton.v1.AccountState
 	1,  // 5: anton.v1.BlockSource.LookupMaster:input_type -> anton.v1.MasterRequest
 	1,  // 6: anton.v1.BlockSource.WaitMaster:input_type -> anton.v1.MasterRequest
-	2,  // 7: anton.v1.BlockSource.GetBlock:input_type -> anton.v1.BlockRequest
-	0,  // 8: anton.v1.BlockSource.CurrentMaster:input_type -> anton.v1.Empty
-	3,  // 9: anton.v1.BlockSource.ProcessedMaster:input_type -> anton.v1.ProcessedMasterRequest
-	4,  // 10: anton.v1.BlockSource.LookupMaster:output_type -> anton.v1.BlockId
-	4,  // 11: anton.v1.BlockSource.WaitMaster:output_type -> anton.v1.BlockId
-	6,  // 12: anton.v1.BlockSource.GetBlock:output_type -> anton.v1.AppliedBlock
-	4,  // 13: anton.v1.BlockSource.CurrentMaster:output_type -> anton.v1.BlockId
-	0,  // 14: anton.v1.BlockSource.ProcessedMaster:output_type -> anton.v1.Empty
-	10, // [10:15] is the sub-list for method output_type
-	5,  // [5:10] is the sub-list for method input_type
+	1,  // 7: anton.v1.BlockSource.SubscribeAppliedBlocks:input_type -> anton.v1.MasterRequest
+	2,  // 8: anton.v1.BlockSource.GetBlock:input_type -> anton.v1.BlockRequest
+	0,  // 9: anton.v1.BlockSource.CurrentMaster:input_type -> anton.v1.Empty
+	3,  // 10: anton.v1.BlockSource.ProcessedMaster:input_type -> anton.v1.ProcessedMasterRequest
+	4,  // 11: anton.v1.BlockSource.LookupMaster:output_type -> anton.v1.BlockId
+	4,  // 12: anton.v1.BlockSource.WaitMaster:output_type -> anton.v1.BlockId
+	6,  // 13: anton.v1.BlockSource.SubscribeAppliedBlocks:output_type -> anton.v1.AppliedBlock
+	6,  // 14: anton.v1.BlockSource.GetBlock:output_type -> anton.v1.AppliedBlock
+	4,  // 15: anton.v1.BlockSource.CurrentMaster:output_type -> anton.v1.BlockId
+	0,  // 16: anton.v1.BlockSource.ProcessedMaster:output_type -> anton.v1.Empty
+	11, // [11:17] is the sub-list for method output_type
+	5,  // [5:11] is the sub-list for method input_type
 	5,  // [5:5] is the sub-list for extension type_name
 	5,  // [5:5] is the sub-list for extension extendee
 	0,  // [0:5] is the sub-list for field type_name

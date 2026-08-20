@@ -19,11 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BlockSource_LookupMaster_FullMethodName    = "/anton.v1.BlockSource/LookupMaster"
-	BlockSource_WaitMaster_FullMethodName      = "/anton.v1.BlockSource/WaitMaster"
-	BlockSource_GetBlock_FullMethodName        = "/anton.v1.BlockSource/GetBlock"
-	BlockSource_CurrentMaster_FullMethodName   = "/anton.v1.BlockSource/CurrentMaster"
-	BlockSource_ProcessedMaster_FullMethodName = "/anton.v1.BlockSource/ProcessedMaster"
+	BlockSource_LookupMaster_FullMethodName           = "/anton.v1.BlockSource/LookupMaster"
+	BlockSource_WaitMaster_FullMethodName             = "/anton.v1.BlockSource/WaitMaster"
+	BlockSource_SubscribeAppliedBlocks_FullMethodName = "/anton.v1.BlockSource/SubscribeAppliedBlocks"
+	BlockSource_GetBlock_FullMethodName               = "/anton.v1.BlockSource/GetBlock"
+	BlockSource_CurrentMaster_FullMethodName          = "/anton.v1.BlockSource/CurrentMaster"
+	BlockSource_ProcessedMaster_FullMethodName        = "/anton.v1.BlockSource/ProcessedMaster"
 )
 
 // BlockSourceClient is the client API for BlockSource service.
@@ -32,6 +33,7 @@ const (
 type BlockSourceClient interface {
 	LookupMaster(ctx context.Context, in *MasterRequest, opts ...grpc.CallOption) (*BlockId, error)
 	WaitMaster(ctx context.Context, in *MasterRequest, opts ...grpc.CallOption) (*BlockId, error)
+	SubscribeAppliedBlocks(ctx context.Context, in *MasterRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AppliedBlock], error)
 	GetBlock(ctx context.Context, in *BlockRequest, opts ...grpc.CallOption) (*AppliedBlock, error)
 	CurrentMaster(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*BlockId, error)
 	ProcessedMaster(ctx context.Context, in *ProcessedMasterRequest, opts ...grpc.CallOption) (*Empty, error)
@@ -64,6 +66,25 @@ func (c *blockSourceClient) WaitMaster(ctx context.Context, in *MasterRequest, o
 	}
 	return out, nil
 }
+
+func (c *blockSourceClient) SubscribeAppliedBlocks(ctx context.Context, in *MasterRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AppliedBlock], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &BlockSource_ServiceDesc.Streams[0], BlockSource_SubscribeAppliedBlocks_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[MasterRequest, AppliedBlock]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type BlockSource_SubscribeAppliedBlocksClient = grpc.ServerStreamingClient[AppliedBlock]
 
 func (c *blockSourceClient) GetBlock(ctx context.Context, in *BlockRequest, opts ...grpc.CallOption) (*AppliedBlock, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -101,6 +122,7 @@ func (c *blockSourceClient) ProcessedMaster(ctx context.Context, in *ProcessedMa
 type BlockSourceServer interface {
 	LookupMaster(context.Context, *MasterRequest) (*BlockId, error)
 	WaitMaster(context.Context, *MasterRequest) (*BlockId, error)
+	SubscribeAppliedBlocks(*MasterRequest, grpc.ServerStreamingServer[AppliedBlock]) error
 	GetBlock(context.Context, *BlockRequest) (*AppliedBlock, error)
 	CurrentMaster(context.Context, *Empty) (*BlockId, error)
 	ProcessedMaster(context.Context, *ProcessedMasterRequest) (*Empty, error)
@@ -119,6 +141,9 @@ func (UnimplementedBlockSourceServer) LookupMaster(context.Context, *MasterReque
 }
 func (UnimplementedBlockSourceServer) WaitMaster(context.Context, *MasterRequest) (*BlockId, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitMaster not implemented")
+}
+func (UnimplementedBlockSourceServer) SubscribeAppliedBlocks(*MasterRequest, grpc.ServerStreamingServer[AppliedBlock]) error {
+	return status.Error(codes.Unimplemented, "method SubscribeAppliedBlocks not implemented")
 }
 func (UnimplementedBlockSourceServer) GetBlock(context.Context, *BlockRequest) (*AppliedBlock, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetBlock not implemented")
@@ -185,6 +210,17 @@ func _BlockSource_WaitMaster_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _BlockSource_SubscribeAppliedBlocks_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(MasterRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(BlockSourceServer).SubscribeAppliedBlocks(m, &grpc.GenericServerStream[MasterRequest, AppliedBlock]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type BlockSource_SubscribeAppliedBlocksServer = grpc.ServerStreamingServer[AppliedBlock]
 
 func _BlockSource_GetBlock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BlockRequest)
@@ -268,6 +304,12 @@ var BlockSource_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _BlockSource_ProcessedMaster_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "SubscribeAppliedBlocks",
+			Handler:       _BlockSource_SubscribeAppliedBlocks_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "api/anton/v1/ingest.proto",
 }
