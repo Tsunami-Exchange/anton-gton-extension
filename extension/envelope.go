@@ -56,7 +56,7 @@ func appliedBlockEnvelope(event hooks.BlockAppliedEvent) (*antonv1.AppliedBlock,
 
 	envelope.Accounts = accounts
 	if id.Workchain == -1 && id.Shard == -1<<63 {
-		if err = addMasterData(state, envelope); err != nil {
+		if err = addMasterData(block, state, envelope); err != nil {
 			return envelope, err
 		}
 	}
@@ -64,12 +64,8 @@ func appliedBlockEnvelope(event hooks.BlockAppliedEvent) (*antonv1.AppliedBlock,
 	return envelope, nil
 }
 
-func addMasterData(state *tlb.ShardStateUnsplit, envelope *antonv1.AppliedBlock) error {
-	extra, err := masterStateExtra(state)
-	if err != nil {
-		return fmt.Errorf("load masterchain state extra: %w", err)
-	}
-	shards, err := ton.LoadShardsFromHashes(extra.ShardHashes, false)
+func addMasterData(block *tlb.Block, state *tlb.ShardStateUnsplit, envelope *antonv1.AppliedBlock) error {
+	shards, err := masterBlockShards(block)
 	if err != nil {
 		return fmt.Errorf("load masterchain shards: %w", err)
 	}
@@ -78,6 +74,10 @@ func addMasterData(state *tlb.ShardStateUnsplit, envelope *antonv1.AppliedBlock)
 		envelope.Shards = append(envelope.Shards, protoBlockID(*shard))
 	}
 
+	extra, err := masterStateExtra(state)
+	if err != nil {
+		return fmt.Errorf("load masterchain state extra: %w", err)
+	}
 	config, err := tlb.ToCell(extra.ConfigParams.Config.Params)
 	if err != nil {
 		return fmt.Errorf("serialize blockchain config: %w", err)
@@ -92,6 +92,13 @@ func addMasterData(state *tlb.ShardStateUnsplit, envelope *antonv1.AppliedBlock)
 		envelope.GlobalLibrariesBoc = libraries.AsCell().ToBOC()
 	}
 	return nil
+}
+
+func masterBlockShards(block *tlb.Block) ([]*ton.BlockIDExt, error) {
+	if block == nil || block.Extra == nil || block.Extra.Custom == nil || block.Extra.Custom.ShardHashes == nil {
+		return nil, fmt.Errorf("master block has no shard hashes")
+	}
+	return ton.LoadShardsFromHashes(block.Extra.Custom.ShardHashes, false)
 }
 
 func appliedShardState(root *cell.Cell) (*tlb.ShardStateUnsplit, error) {
