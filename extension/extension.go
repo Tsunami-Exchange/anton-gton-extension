@@ -6,7 +6,9 @@ import (
 	"net"
 	"os"
 
+	"github.com/rs/zerolog"
 	"github.com/xssnick/gton/service/hooks"
+	"github.com/xssnick/gton/service/storage"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -19,6 +21,7 @@ const maxMessageSize = 64 << 20
 type Extension struct {
 	listen string
 	store  *blockStore
+	log    zerolog.Logger
 
 	listener net.Listener
 	server   *grpc.Server
@@ -26,7 +29,7 @@ type Extension struct {
 
 var _ hooks.Extension = (*Extension)(nil)
 
-func New(hooks.Node) (hooks.Extension, error) {
+func New(node hooks.Node) (hooks.Extension, error) {
 	listen := os.Getenv("GTON_GRPC_LISTEN")
 	if listen == "" {
 		listen = "127.0.0.1:50051"
@@ -39,7 +42,7 @@ func New(hooks.Node) (hooks.Extension, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Extension{listen: listen, store: store}, nil
+	return &Extension{listen: listen, store: store, log: node.Logger}, nil
 }
 
 func (e *Extension) Start(context.Context) error {
@@ -76,7 +79,18 @@ func (e *Extension) Close(ctx context.Context) error {
 func (e *Extension) OnBlockApplied(_ context.Context, event hooks.BlockAppliedEvent) error {
 	envelope, err := appliedBlockEnvelope(event)
 	if err != nil {
-		return err
+		block := "<unknown>"
+		if event.Meta != nil {
+			block = storage.FormatBlockRef(event.Meta.ID)
+		}
+		logEvent := e.log.Error().
+			Err(err).
+			Str("block", block)
+		if envelope == nil {
+			logEvent.Msg("failed to build applied block envelope; skipping extension event")
+			return nil
+		}
+		logEvent.Msg("failed to enrich applied block; storing partial event")
 	}
 	return e.store.put(envelope)
 }

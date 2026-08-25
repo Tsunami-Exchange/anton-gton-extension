@@ -2,15 +2,15 @@ package extension
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/xssnick/gton/service/hooks"
-	"github.com/xssnick/gton/service/liveview"
 	"github.com/xssnick/gton/service/storage"
-	"github.com/xssnick/tonutils-go/address"
 	"github.com/xssnick/tonutils-go/tlb"
 	"github.com/xssnick/tonutils-go/ton"
+	"github.com/xssnick/tonutils-go/tvm/cell"
 
 	antonv1 "github.com/Tsunami-Exchange/anton-gton-extension/api/anton/v1"
 )
@@ -20,59 +20,52 @@ func appliedBlockEnvelope(event hooks.BlockAppliedEvent) (*antonv1.AppliedBlock,
 		return nil, fmt.Errorf("applied block metadata is missing")
 	}
 	id := event.Meta.ID
-	block, err := storage.ParseVerifiedBlockCell(id, event.BlockRoot)
-	if err != nil {
-		return nil, fmt.Errorf("parse applied block: %w", err)
-	}
-	view, err := liveview.NewBlockView(id, event.BlockRoot, event.CurrentState)
-	if err != nil {
-		return nil, fmt.Errorf("build applied block view: %w", err)
-	}
-
-	accountIDs, err := transactionAccountIDs(block)
-	if err != nil {
-		return nil, err
-	}
-	accounts := make([]*antonv1.AccountState, 0, len(accountIDs))
-	for _, accountID := range accountIDs {
-		shardAccount, state, err := view.ExternalMessageAccount(address.NewAddress(0, byte(id.Workchain), accountID))
-		if err != nil {
-			return nil, fmt.Errorf("load account %x: %w", accountID, err)
-		}
-		account := &antonv1.AccountState{
-			Workchain:           id.Workchain,
-			Address:             bytes.Clone(accountID),
-			Exists:              state.IsValid,
-			LastTransactionLt:   shardAccount.LastTransLT,
-			LastTransactionHash: bytes.Clone(shardAccount.LastTransHash),
-		}
-		if state.IsValid {
-			account.StateBoc = shardAccount.Account.ToBOC()
-		}
-		accounts = append(accounts, account)
-	}
-
 	envelope := &antonv1.AppliedBlock{
 		EventId:             fmt.Sprintf("%d:%d:%d:%x", id.Workchain, id.Shard, id.SeqNo, id.RootHash),
 		Block:               protoBlockID(id),
 		BlockBoc:            bytes.Clone(event.BlockBOC),
 		ProofBoc:            bytes.Clone(event.ProofBOC),
-		Accounts:            accounts,
 		ObservedAtUnixMilli: time.Now().UnixMilli(),
 	}
 	if event.InclusionMasterRef != nil {
 		envelope.InclusionMaster = protoBlockID(*event.InclusionMasterRef)
 	}
+
+	block, err := storage.ParseVerifiedBlockCell(id, event.BlockRoot)
+	if err != nil {
+		return envelope, fmt.Errorf("parse applied block: %w", err)
+	}
+	state, err := appliedShardState(event.CurrentState)
+	if err != nil {
+		return envelope, fmt.Errorf("parse applied state: %w", err)
+	}
+
+	accountIDs, err := transactionAccountIDs(block)
+	if err != nil {
+		return envelope, err
+	}
+
+	accounts := make([]*antonv1.AccountState, 0, len(accountIDs))
+	for _, accountID := range accountIDs {
+		account, err := appliedAccountState(state, id.Workchain, accountID)
+		if err != nil {
+			return envelope, fmt.Errorf("load account %x: %w", accountID, err)
+		}
+		accounts = append(accounts, account)
+	}
+
+	envelope.Accounts = accounts
 	if id.Workchain == -1 && id.Shard == -1<<63 {
-		if err = addMasterData(view, envelope); err != nil {
-			return nil, err
+		if err = addMasterData(state, envelope); err != nil {
+			return envelope, err
 		}
 	}
+
 	return envelope, nil
 }
 
-func addMasterData(view *liveview.BlockView, envelope *antonv1.AppliedBlock) error {
-	extra, err := view.McStateExtra()
+func addMasterData(state *tlb.ShardStateUnsplit, envelope *antonv1.AppliedBlock) error {
+	extra, err := masterStateExtra(state)
 	if err != nil {
 		return fmt.Errorf("load masterchain state extra: %w", err)
 	}
@@ -91,7 +84,7 @@ func addMasterData(view *liveview.BlockView, envelope *antonv1.AppliedBlock) err
 	}
 	envelope.BlockchainConfigBoc = config.ToBOC()
 
-	libraries, err := view.GlobalLibraries()
+	libraries, err := globalLibraries(state)
 	if err != nil {
 		return fmt.Errorf("load global libraries: %w", err)
 	}
@@ -101,25 +94,122 @@ func addMasterData(view *liveview.BlockView, envelope *antonv1.AppliedBlock) err
 	return nil
 }
 
+func appliedShardState(root *cell.Cell) (*tlb.ShardStateUnsplit, error) {
+	if root == nil {
+		return nil, fmt.Errorf("current state root is missing")
+	}
+	loader, err := root.BeginParse()
+	if err != nil {
+		return nil, err
+	}
+	var state tlb.ShardStateUnsplit
+	if err = tlb.LoadFromCell(&state, loader); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func appliedAccountState(state *tlb.ShardStateUnsplit, workchain int32, accountID []byte) (*antonv1.AccountState, error) {
+	account := &antonv1.AccountState{
+		Workchain: workchain,
+		Address:   bytes.Clone(accountID),
+	}
+	if state.Accounts.ShardAccounts == nil || state.Accounts.ShardAccounts.IsEmpty() {
+		return account, nil
+	}
+	value, err := state.Accounts.ShardAccounts.LoadValue(accountKey(accountID))
+	if errors.Is(err, cell.ErrNoSuchKeyInDict) {
+		return account, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var shardAccount tlb.ShardAccount
+	if err = tlb.LoadFromCell(&shardAccount, value); err != nil {
+		return nil, err
+	}
+	loader, err := shardAccount.Account.BeginParse()
+	if err != nil {
+		return nil, err
+	}
+	var stateAccount tlb.AccountState
+	if err = tlb.LoadFromCell(&stateAccount, loader); err != nil {
+		return nil, err
+	}
+	account.Exists = stateAccount.IsValid
+	account.LastTransactionLt = shardAccount.LastTransLT
+	account.LastTransactionHash = bytes.Clone(shardAccount.LastTransHash)
+	if stateAccount.IsValid {
+		account.StateBoc = shardAccount.Account.ToBOC()
+	}
+	return account, nil
+}
+
+func masterStateExtra(state *tlb.ShardStateUnsplit) (*tlb.McStateExtra, error) {
+	if state.McStateExtra == nil {
+		return nil, fmt.Errorf("state is missing mc_state_extra")
+	}
+	loader, err := state.McStateExtra.BeginParse()
+	if err != nil {
+		return nil, err
+	}
+	var extra tlb.McStateExtra
+	if err = tlb.LoadFromCell(&extra, loader); err != nil {
+		return nil, err
+	}
+	return &extra, nil
+}
+
+func globalLibraries(state *tlb.ShardStateUnsplit) (*cell.Dictionary, error) {
+	if state.Stats == nil {
+		return nil, fmt.Errorf("state is missing shard state extras")
+	}
+	loader, err := state.Stats.BeginParse()
+	if err != nil {
+		return nil, err
+	}
+	if _, err = loader.LoadUInt(64); err != nil {
+		return nil, err
+	}
+	if _, err = loader.LoadUInt(64); err != nil {
+		return nil, err
+	}
+	if err = skipCurrencyCollectionBoundary(loader); err != nil {
+		return nil, err
+	}
+	if err = skipCurrencyCollectionBoundary(loader); err != nil {
+		return nil, err
+	}
+	return loader.LoadDict(256)
+}
+
 func transactionAccountIDs(block *tlb.Block) ([][]byte, error) {
 	if block.Extra == nil || block.Extra.ShardAccountBlocks == nil {
 		return nil, fmt.Errorf("block has no shard account blocks")
 	}
-	var shardAccounts tlb.ShardAccountBlocks
-	if err := tlb.LoadFromCell(&shardAccounts, block.Extra.ShardAccountBlocks.MustBeginParse()); err != nil {
+	accounts, err := block.Extra.ShardAccountBlocks.BeginParse()
+	if err != nil {
 		return nil, fmt.Errorf("load shard account blocks: %w", err)
 	}
-	if shardAccounts.Accounts == nil {
+	hasAccounts, err := accounts.LoadBoolBit()
+	if err != nil {
+		return nil, fmt.Errorf("load shard account blocks root flag: %w", err)
+	}
+	if !hasAccounts {
 		return nil, nil
 	}
-
-	items, err := shardAccounts.Accounts.Range(false, false)
+	root, err := accounts.LoadRefCell()
+	if err != nil {
+		return nil, fmt.Errorf("load shard account blocks root: %w", err)
+	}
+	items, err := root.AsDict(256).LoadAll()
 	if err != nil {
 		return nil, fmt.Errorf("iterate shard account blocks: %w", err)
 	}
-	accounts := make([][]byte, 0, len(items))
+	accountIDs := make([][]byte, 0, len(items))
 	for _, item := range items {
-		if err = tlb.LoadFromCell(new(tlb.CurrencyCollection), item.Value); err != nil {
+		if err = skipCurrencyCollectionBoundary(item.Value); err != nil {
 			return nil, fmt.Errorf("load account block fees: %w", err)
 		}
 		var accountBlock tlb.AccountBlock
@@ -129,9 +219,21 @@ func transactionAccountIDs(block *tlb.Block) ([][]byte, error) {
 		if len(accountBlock.Addr) != 32 {
 			return nil, fmt.Errorf("account address is %d bytes", len(accountBlock.Addr))
 		}
-		accounts = append(accounts, bytes.Clone(accountBlock.Addr))
+		accountIDs = append(accountIDs, bytes.Clone(accountBlock.Addr))
 	}
-	return accounts, nil
+	return accountIDs, nil
+}
+
+func skipCurrencyCollectionBoundary(loader *cell.Slice) error {
+	if _, err := loader.LoadBigCoins(); err != nil {
+		return err
+	}
+	_, err := loader.LoadMaybeRef()
+	return err
+}
+
+func accountKey(accountID []byte) *cell.Cell {
+	return cell.BeginCell().MustStoreSlice(accountID, 256).EndCell()
 }
 
 func protoBlockID(id ton.BlockIDExt) *antonv1.BlockId {
