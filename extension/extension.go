@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xssnick/gton/service/hooks"
@@ -16,7 +17,10 @@ import (
 	antonv1 "github.com/Tsunami-Exchange/anton-gton-extension/api/anton/v1"
 )
 
-const maxMessageSize = 64 << 20
+const (
+	maxMessageSize = 64 << 20
+	liveTailMaxLag = 10 * time.Second
+)
 
 type Extension struct {
 	listen string
@@ -77,6 +81,9 @@ func (e *Extension) Close(ctx context.Context) error {
 }
 
 func (e *Extension) OnBlockApplied(_ context.Context, event hooks.BlockAppliedEvent) error {
+	if !isLiveAppliedBlock(event, time.Now()) {
+		return nil
+	}
 	envelope, err := appliedBlockEnvelope(event)
 	if err != nil {
 		block := "<unknown>"
@@ -93,6 +100,11 @@ func (e *Extension) OnBlockApplied(_ context.Context, event hooks.BlockAppliedEv
 		logEvent.Msg("failed to enrich applied block; storing partial event")
 	}
 	return e.store.put(envelope)
+}
+
+func isLiveAppliedBlock(event hooks.BlockAppliedEvent, now time.Time) bool {
+	return event.Meta != nil && event.Meta.GenUTime != 0 &&
+		now.Unix()-int64(event.Meta.GenUTime) <= int64(liveTailMaxLag/time.Second)
 }
 
 func (*Extension) OnExternalMessage(context.Context, hooks.ExternalMessageEvent) error {
