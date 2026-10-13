@@ -15,25 +15,32 @@ The data flow:
    by the stream's duplicate window keyed on the event id.
 2. Messages are published as `gton.blocks.<master seqno>.master` and
    `gton.blocks.<master seqno>.shard`, where the seqno is the master that
-   includes the block. Shards precede their master. Every message carries the
-   `Gton-Master-Seqno` header, so a consumer that has committed master N
-   resumes from the message after `gton.blocks.N.master`.
+   includes the block. gton applies a master and then the shard blocks it
+   includes, so master N comes first, followed by its shards, and master N is
+   complete once `gton.blocks.N+1.master` arrives. A consumer that has
+   committed master N resumes from the first message of `gton.blocks.N+1.>`.
+   Every message carries the `Gton-Master-Seqno` header.
 3. The stream keeps blocks for `GTON_BLOCK_RETENTION` regardless of who
    consumed them. Any number of consumers can read it with their own cursors.
 
 The envelope contains the raw block and proof BOCs, block identity, inclusion
 master, master shard list and all transaction-account states. A master event
-also carries the hash of the global library dictionary, and its BOC only when
-the hash changed since the previous master; the current dictionary is kept
-under the `current` key of the `GTON_LIBRARIES` key-value bucket for a
-consumer joining mid-stream.
+also carries the hash of the global library dictionary, and its BOC when the
+dictionary changed since the last one the extension stored (always for the
+first master after a node restart). Every dictionary is stored in the
+`GTON_LIBRARIES` key-value bucket under its hex hash, so a consumer replaying
+an old master looks up that master's dictionary.
+
+Writes are fsynced before the hook returns, and messages up to 64 MB are
+accepted. A publish error is returned to gton, which retries the block flow,
+so a full disk stalls the node until space is freed.
 
 ## Versions
 
 The repositories intentionally have independent dependency graphs:
 
 - Anton: Go 1.24, tonutils-go 1.13.
-- This extension: Go 1.26, gton 0.7, gton's tonutils-go version.
+- This extension: Go 1.26, gton 1.0, gton's tonutils-go version.
 
 ## Build
 

@@ -278,3 +278,24 @@ func TestOnBlockAppliedSkipsShardWithoutInclusionMaster(t *testing.T) {
 	require.Equal(t, uint64(1), info.State.Msgs, "a shard no master includes is not indexable")
 	require.NotNil(t, storedBlock(t, s, "gton.blocks.100.master"))
 }
+
+func TestPublishKeepsLibrariesUnrecordedWhenPublishFails(t *testing.T) {
+	extension, s := testExtension(t)
+	master := testStreamEvent(-1, 100, nil)
+	master.GlobalLibrariesHash = bytes.Repeat([]byte{7}, 32)
+	master.GlobalLibrariesBoc = []byte{1}
+	require.NoError(t, extension.stream.js.DeleteStream(context.Background(), s.CachedInfo().Config.Name))
+
+	require.Error(t, extension.publish(context.Background(), master))
+
+	retry := testStreamEvent(-1, 100, nil)
+	retry.GlobalLibrariesHash = master.GlobalLibrariesHash
+	retry.GlobalLibrariesBoc = []byte{1}
+	require.True(t, extension.libraries.prune(retry), "the retried master must still carry the dictionary")
+}
+
+func TestStreamConfigRejectsNonPositiveRetention(t *testing.T) {
+	t.Setenv("GTON_BLOCK_RETENTION", "0s")
+	_, err := streamConfigFromEnv()
+	require.Error(t, err)
+}

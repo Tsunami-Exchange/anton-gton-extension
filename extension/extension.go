@@ -37,6 +37,7 @@ func New(node hooks.Node) (hooks.Extension, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.log = node.Logger
 	return &Extension{cfg: cfg, libraries: &librariesCache{}, log: node.Logger}, nil
 }
 
@@ -61,6 +62,9 @@ func streamConfigFromEnv() (streamConfig, error) {
 	if raw := os.Getenv("GTON_BLOCK_RETENTION"); raw != "" {
 		if retention, err = time.ParseDuration(raw); err != nil {
 			return streamConfig{}, fmt.Errorf("GTON_BLOCK_RETENTION: %w", err)
+		}
+		if retention <= 0 {
+			return streamConfig{}, fmt.Errorf("GTON_BLOCK_RETENTION must be positive, got %s", raw)
 		}
 	}
 	return streamConfig{host: host, port: port, dir: dir, retention: retention}, nil
@@ -111,16 +115,29 @@ func (e *Extension) OnBlockApplied(ctx context.Context, event hooks.BlockApplied
 		}
 		logEvent.Msg("failed to enrich applied block; publishing partial event")
 	}
-	if e.libraries.prune(envelope) {
-		if err = e.stream.putLibraries(ctx, &antonv1.GlobalLibraries{
+	return e.publish(ctx, envelope)
+}
+
+// publish stores a changed library dictionary and the envelope. The
+// dictionary is recorded only once both are stored, so a failed attempt is
+// retried with the dictionary body.
+func (e *Extension) publish(ctx context.Context, envelope *antonv1.AppliedBlock) error {
+	librariesChanged := e.libraries.prune(envelope)
+	if librariesChanged {
+		if err := e.stream.putLibraries(ctx, &antonv1.GlobalLibraries{
 			Hash: envelope.GlobalLibrariesHash,
 			Boc:  envelope.GlobalLibrariesBoc,
 		}); err != nil {
 			return err
 		}
+	}
+	if err := e.stream.publish(ctx, envelope); err != nil {
+		return err
+	}
+	if librariesChanged {
 		e.libraries.record(envelope)
 	}
-	return e.stream.publish(ctx, envelope)
+	return nil
 }
 
 // isPublished reports whether the block belongs to a master older than the

@@ -181,8 +181,8 @@ func (x *AccountState) GetLastTransactionHash() []byte {
 	return nil
 }
 
-// GlobalLibraries is the masterchain global library dictionary the node
-// applied most recently; it is stored in the GTON_LIBRARIES key-value bucket.
+// GlobalLibraries is a masterchain global library dictionary; it is stored in
+// the GTON_LIBRARIES key-value bucket under its hex hash.
 type GlobalLibraries struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Hash          []byte                 `protobuf:"bytes,1,opt,name=hash,proto3" json:"hash,omitempty"`
@@ -244,8 +244,8 @@ type AppliedBlock struct {
 	ProofBoc        []byte                 `protobuf:"bytes,5,opt,name=proof_boc,json=proofBoc,proto3" json:"proof_boc,omitempty"`
 	Shards          []*BlockId             `protobuf:"bytes,6,rep,name=shards,proto3" json:"shards,omitempty"`
 	Accounts        []*AccountState        `protobuf:"bytes,7,rep,name=accounts,proto3" json:"accounts,omitempty"`
-	// global_libraries_boc is set only when global_libraries_hash differs from
-	// the previous master block's; the hash itself is set on every master.
+	// global_libraries_boc is set when the dictionary changed since the last
+	// one the extension stored; the hash is set on every enriched master.
 	GlobalLibrariesBoc  []byte `protobuf:"bytes,9,opt,name=global_libraries_boc,json=globalLibrariesBoc,proto3" json:"global_libraries_boc,omitempty"`
 	ObservedAtUnixMilli int64  `protobuf:"varint,10,opt,name=observed_at_unix_milli,json=observedAtUnixMilli,proto3" json:"observed_at_unix_milli,omitempty"`
 	GlobalLibrariesHash []byte `protobuf:"bytes,11,opt,name=global_libraries_hash,json=globalLibrariesHash,proto3" json:"global_libraries_hash,omitempty"`

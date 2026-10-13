@@ -3,6 +3,7 @@ package extension
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -60,8 +61,9 @@ func TestBlockStreamPublishesBlocksUnderTheirMasterSubject(t *testing.T) {
 	master := testStreamEvent(-1, 100, nil)
 	shard := testStreamEvent(0, 42, master.Block)
 
-	require.NoError(t, stream.publish(context.Background(), shard))
+	// gton applies a master and then the shard blocks it includes.
 	require.NoError(t, stream.publish(context.Background(), master))
+	require.NoError(t, stream.publish(context.Background(), shard))
 
 	s := readStream(t, stream)
 	raw, err := s.GetLastMsgForSubject(context.Background(), "gton.blocks.100.master")
@@ -75,7 +77,15 @@ func TestBlockStreamPublishesBlocksUnderTheirMasterSubject(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, proto.Unmarshal(raw.Data, got))
 	require.Equal(t, shard.Block.RootHash, got.Block.RootHash)
-	require.Equal(t, uint64(1), raw.Sequence, "shard was applied before its master")
+	require.Equal(t, "100", raw.Header.Get(headerMasterSeqno))
+}
+
+func TestBlockStreamPublishesEnvelopeLargerThanDefaultPayload(t *testing.T) {
+	stream := testStream(t, t.TempDir())
+	master := testStreamEvent(-1, 100, nil)
+	master.BlockBoc = bytes.Repeat([]byte{1}, 2<<20)
+
+	require.NoError(t, stream.publish(context.Background(), master))
 }
 
 func TestBlockStreamDropsRepeatedEvent(t *testing.T) {
@@ -104,10 +114,12 @@ func TestBlockStreamRestoresPublishedMasterAfterRestart(t *testing.T) {
 	require.Equal(t, uint32(100), reopened.publishedMaster(), "watermark comes from the stored stream")
 }
 
-func TestBlockStreamStoresCurrentLibraries(t *testing.T) {
+func TestBlockStreamStoresLibrariesByHash(t *testing.T) {
 	stream := testStream(t, t.TempDir())
-	libraries := &antonv1.GlobalLibraries{Hash: bytes.Repeat([]byte{7}, 32), Boc: []byte{1, 2}}
-	require.NoError(t, stream.putLibraries(context.Background(), libraries))
+	older := &antonv1.GlobalLibraries{Hash: bytes.Repeat([]byte{7}, 32), Boc: []byte{1}}
+	newer := &antonv1.GlobalLibraries{Hash: bytes.Repeat([]byte{8}, 32), Boc: []byte{2}}
+	require.NoError(t, stream.putLibraries(context.Background(), older))
+	require.NoError(t, stream.putLibraries(context.Background(), newer))
 
 	conn, err := nats.Connect(stream.clientURL())
 	require.NoError(t, err)
@@ -116,12 +128,13 @@ func TestBlockStreamStoresCurrentLibraries(t *testing.T) {
 	require.NoError(t, err)
 	kv, err := js.KeyValue(context.Background(), librariesBucket)
 	require.NoError(t, err)
-	entry, err := kv.Get(context.Background(), librariesKey)
+	// A consumer replaying an old master looks up that master's dictionary,
+	// not the newest one.
+	entry, err := kv.Get(context.Background(), hex.EncodeToString(older.Hash))
 	require.NoError(t, err)
 	got := new(antonv1.GlobalLibraries)
 	require.NoError(t, proto.Unmarshal(entry.Value(), got))
-	require.Equal(t, libraries.Hash, got.Hash)
-	require.Equal(t, libraries.Boc, got.Boc)
+	require.Equal(t, older.Boc, got.Boc)
 }
 
 func TestBlockStreamOpensAfterEveryBlockExpired(t *testing.T) {

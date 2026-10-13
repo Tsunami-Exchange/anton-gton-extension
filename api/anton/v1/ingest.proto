@@ -21,8 +21,8 @@ message AccountState {
   bytes last_transaction_hash = 6;
 }
 
-// GlobalLibraries is the masterchain global library dictionary the node
-// applied most recently; it is stored in the GTON_LIBRARIES key-value bucket.
+// GlobalLibraries is a masterchain global library dictionary; it is stored in
+// the GTON_LIBRARIES key-value bucket under its hex hash.
 message GlobalLibraries {
   bytes hash = 1;
   bytes boc = 2;
@@ -39,8 +39,8 @@ message AppliedBlock {
   bytes proof_boc = 5;
   repeated BlockId shards = 6;
   repeated AccountState accounts = 7;
-  // global_libraries_boc is set only when global_libraries_hash differs from
-  // the previous master block's; the hash itself is set on every master.
+  // global_libraries_boc is set when the dictionary changed since the last
+  // one the extension stored; the hash is set on every enriched master.
   bytes global_libraries_boc = 9;
   int64 observed_at_unix_milli = 10;
   bytes global_libraries_hash = 11;

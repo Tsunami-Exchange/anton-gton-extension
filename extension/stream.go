@@ -2,6 +2,7 @@ package extension
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/rs/zerolog"
 	"google.golang.org/protobuf/proto"
 
 	antonv1 "github.com/Tsunami-Exchange/anton-gton-extension/api/anton/v1"
@@ -22,8 +24,9 @@ const (
 	// headerMasterSeqno carries the master seqno a message belongs to, so a
 	// consumer can position itself without decoding payloads.
 	headerMasterSeqno = "Gton-Master-Seqno"
-	librariesBucket   = "GTON_LIBRARIES"
-	librariesKey      = "current"
+	// librariesBucket holds every global library dictionary a master carried,
+	// keyed by the hex hash the master envelopes refer to.
+	librariesBucket = "GTON_LIBRARIES"
 
 	subjectKindMaster = "master"
 	subjectKindShard  = "shard"
@@ -33,6 +36,9 @@ const (
 	// retention.
 	duplicateWindow = 10 * time.Minute
 	startupTimeout  = 30 * time.Second
+	// maxPayload fits a master envelope with the full library dictionary and
+	// shard envelopes with many account states; the NATS default is 1 MB.
+	maxPayload = 64 << 20
 )
 
 type streamConfig struct {
@@ -40,6 +46,7 @@ type streamConfig struct {
 	port      int
 	dir       string
 	retention time.Duration
+	log       zerolog.Logger
 }
 
 // blockStream is an embedded JetStream server holding every applied block
@@ -57,16 +64,20 @@ type blockStream struct {
 
 func newBlockStream(ctx context.Context, cfg streamConfig) (*blockStream, error) {
 	srv, err := server.NewServer(&server.Options{
-		Host:      cfg.host,
-		Port:      cfg.port,
-		JetStream: true,
-		StoreDir:  cfg.dir,
-		NoSigs:    true,
-		NoLog:     true,
+		Host:       cfg.host,
+		Port:       cfg.port,
+		JetStream:  true,
+		StoreDir:   cfg.dir,
+		MaxPayload: maxPayload,
+		// The hook returns once a block is published and gton then
+		// checkpoints past it, so an acknowledged block must survive a crash.
+		SyncAlways: true,
+		NoSigs:     true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("configure embedded nats: %w", err)
 	}
+	srv.SetLoggerV2(natsLogger{log: cfg.log.With().Str("component", "anton-nats").Logger()}, false, false, false)
 	go srv.Start()
 	if !srv.ReadyForConnections(startupTimeout) {
 		srv.Shutdown()
@@ -164,7 +175,7 @@ func (s *blockStream) putLibraries(ctx context.Context, libraries *antonv1.Globa
 	if err != nil {
 		return err
 	}
-	_, err = s.kv.Put(ctx, librariesKey, data)
+	_, err = s.kv.Put(ctx, hex.EncodeToString(libraries.Hash), data)
 	return err
 }
 
@@ -188,3 +199,16 @@ func blockSubject(event *antonv1.AppliedBlock) string {
 	}
 	return fmt.Sprintf("%s.%d.%s", subjectPrefix, inclusionSeqNo(event), kind)
 }
+
+// natsLogger routes the embedded server's log to the node log. Fatal messages
+// are logged as errors: the server must not exit the node.
+type natsLogger struct {
+	log zerolog.Logger
+}
+
+func (l natsLogger) Noticef(format string, v ...any) { l.log.Info().Msgf(format, v...) }
+func (l natsLogger) Warnf(format string, v ...any)   { l.log.Warn().Msgf(format, v...) }
+func (l natsLogger) Fatalf(format string, v ...any)  { l.log.Error().Msgf(format, v...) }
+func (l natsLogger) Errorf(format string, v ...any)  { l.log.Error().Msgf(format, v...) }
+func (l natsLogger) Debugf(format string, v ...any)  { l.log.Debug().Msgf(format, v...) }
+func (l natsLogger) Tracef(format string, v ...any)  { l.log.Trace().Msgf(format, v...) }
