@@ -19,23 +19,42 @@ func appliedBlockEnvelope(event hooks.BlockAppliedEvent) (*antonv1.AppliedBlock,
 	if event.Meta == nil {
 		return nil, fmt.Errorf("applied block metadata is missing")
 	}
-	id := event.Meta.ID
+	return blockEnvelope(event.Meta.ID, event.BlockBOC, event.ProofBOC, event.BlockRoot, event.CurrentState, event.InclusionMasterRef)
+}
+
+// blockEnvelope builds the Anton event for one applied block. The inputs are
+// exactly what the apply hook hands over, so the same builder serves blocks
+// read back from the node database for replay.
+func blockEnvelope(id ton.BlockIDExt, blockBOC, proofBOC []byte, blockRoot, stateRoot *cell.Cell, inclusionMaster *ton.BlockIDExt) (*antonv1.AppliedBlock, error) {
 	envelope := &antonv1.AppliedBlock{
 		EventId:             fmt.Sprintf("%d:%d:%d:%x", id.Workchain, id.Shard, id.SeqNo, id.RootHash),
 		Block:               protoBlockID(id),
-		BlockBoc:            bytes.Clone(event.BlockBOC),
-		ProofBoc:            bytes.Clone(event.ProofBOC),
+		BlockBoc:            bytes.Clone(blockBOC),
+		ProofBoc:            bytes.Clone(proofBOC),
 		ObservedAtUnixMilli: time.Now().UnixMilli(),
 	}
-	if event.InclusionMasterRef != nil {
-		envelope.InclusionMaster = protoBlockID(*event.InclusionMasterRef)
+	if inclusionMaster != nil {
+		envelope.InclusionMaster = protoBlockID(*inclusionMaster)
 	}
 
-	block, err := storage.ParseVerifiedBlockCell(id, event.BlockRoot)
+	block, err := storage.ParseVerifiedBlockCell(id, blockRoot)
 	if err != nil {
 		return envelope, fmt.Errorf("parse applied block: %w", err)
 	}
-	state, err := appliedShardState(event.CurrentState)
+	master := id.Workchain == -1 && id.Shard == -1<<63
+	if master {
+		// Shards come from the block itself, so a partial envelope still tells
+		// the consumer which shard blocks to expect even if the state fails.
+		shards, err := masterBlockShards(block)
+		if err != nil {
+			return envelope, fmt.Errorf("load masterchain shards: %w", err)
+		}
+		envelope.Shards = make([]*antonv1.BlockId, 0, len(shards))
+		for _, shard := range shards {
+			envelope.Shards = append(envelope.Shards, protoBlockID(*shard))
+		}
+	}
+	state, err := appliedShardState(stateRoot)
 	if err != nil {
 		return envelope, fmt.Errorf("parse applied state: %w", err)
 	}
@@ -55,8 +74,8 @@ func appliedBlockEnvelope(event hooks.BlockAppliedEvent) (*antonv1.AppliedBlock,
 	}
 
 	envelope.Accounts = accounts
-	if id.Workchain == -1 && id.Shard == -1<<63 {
-		if err = addMasterData(block, state, envelope); err != nil {
+	if master {
+		if err = addMasterData(state, envelope); err != nil {
 			return envelope, err
 		}
 	}
@@ -64,16 +83,7 @@ func appliedBlockEnvelope(event hooks.BlockAppliedEvent) (*antonv1.AppliedBlock,
 	return envelope, nil
 }
 
-func addMasterData(block *tlb.Block, state *tlb.ShardStateUnsplit, envelope *antonv1.AppliedBlock) error {
-	shards, err := masterBlockShards(block)
-	if err != nil {
-		return fmt.Errorf("load masterchain shards: %w", err)
-	}
-	envelope.Shards = make([]*antonv1.BlockId, 0, len(shards))
-	for _, shard := range shards {
-		envelope.Shards = append(envelope.Shards, protoBlockID(*shard))
-	}
-
+func addMasterData(state *tlb.ShardStateUnsplit, envelope *antonv1.AppliedBlock) error {
 	extra, err := masterStateExtra(state)
 	if err != nil {
 		return fmt.Errorf("load masterchain state extra: %w", err)
