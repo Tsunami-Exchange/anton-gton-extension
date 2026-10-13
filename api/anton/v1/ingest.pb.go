@@ -21,174 +21,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type Empty struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Empty) Reset() {
-	*x = Empty{}
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[0]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Empty) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Empty) ProtoMessage() {}
-
-func (x *Empty) ProtoReflect() protoreflect.Message {
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[0]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Empty.ProtoReflect.Descriptor instead.
-func (*Empty) Descriptor() ([]byte, []int) {
-	return file_api_anton_v1_ingest_proto_rawDescGZIP(), []int{0}
-}
-
-type MasterRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Seqno         uint32                 `protobuf:"varint,1,opt,name=seqno,proto3" json:"seqno,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *MasterRequest) Reset() {
-	*x = MasterRequest{}
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *MasterRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*MasterRequest) ProtoMessage() {}
-
-func (x *MasterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use MasterRequest.ProtoReflect.Descriptor instead.
-func (*MasterRequest) Descriptor() ([]byte, []int) {
-	return file_api_anton_v1_ingest_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *MasterRequest) GetSeqno() uint32 {
-	if x != nil {
-		return x.Seqno
-	}
-	return 0
-}
-
-type BlockRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Block         *BlockId               `protobuf:"bytes,1,opt,name=block,proto3" json:"block,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *BlockRequest) Reset() {
-	*x = BlockRequest{}
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *BlockRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*BlockRequest) ProtoMessage() {}
-
-func (x *BlockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use BlockRequest.ProtoReflect.Descriptor instead.
-func (*BlockRequest) Descriptor() ([]byte, []int) {
-	return file_api_anton_v1_ingest_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *BlockRequest) GetBlock() *BlockId {
-	if x != nil {
-		return x.Block
-	}
-	return nil
-}
-
-type ProcessedMasterRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Seqno         uint32                 `protobuf:"varint,1,opt,name=seqno,proto3" json:"seqno,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ProcessedMasterRequest) Reset() {
-	*x = ProcessedMasterRequest{}
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ProcessedMasterRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ProcessedMasterRequest) ProtoMessage() {}
-
-func (x *ProcessedMasterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ProcessedMasterRequest.ProtoReflect.Descriptor instead.
-func (*ProcessedMasterRequest) Descriptor() ([]byte, []int) {
-	return file_api_anton_v1_ingest_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *ProcessedMasterRequest) GetSeqno() uint32 {
-	if x != nil {
-		return x.Seqno
-	}
-	return 0
-}
-
 type BlockId struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Workchain     int32                  `protobuf:"varint,1,opt,name=workchain,proto3" json:"workchain,omitempty"`
@@ -202,7 +34,7 @@ type BlockId struct {
 
 func (x *BlockId) Reset() {
 	*x = BlockId{}
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[4]
+	mi := &file_api_anton_v1_ingest_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -214,7 +46,7 @@ func (x *BlockId) String() string {
 func (*BlockId) ProtoMessage() {}
 
 func (x *BlockId) ProtoReflect() protoreflect.Message {
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[4]
+	mi := &file_api_anton_v1_ingest_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -227,7 +59,7 @@ func (x *BlockId) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockId.ProtoReflect.Descriptor instead.
 func (*BlockId) Descriptor() ([]byte, []int) {
-	return file_api_anton_v1_ingest_proto_rawDescGZIP(), []int{4}
+	return file_api_anton_v1_ingest_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *BlockId) GetWorkchain() int32 {
@@ -279,7 +111,7 @@ type AccountState struct {
 
 func (x *AccountState) Reset() {
 	*x = AccountState{}
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[5]
+	mi := &file_api_anton_v1_ingest_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -291,7 +123,7 @@ func (x *AccountState) String() string {
 func (*AccountState) ProtoMessage() {}
 
 func (x *AccountState) ProtoReflect() protoreflect.Message {
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[5]
+	mi := &file_api_anton_v1_ingest_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -304,7 +136,7 @@ func (x *AccountState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccountState.ProtoReflect.Descriptor instead.
 func (*AccountState) Descriptor() ([]byte, []int) {
-	return file_api_anton_v1_ingest_proto_rawDescGZIP(), []int{5}
+	return file_api_anton_v1_ingest_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *AccountState) GetWorkchain() int32 {
@@ -349,8 +181,8 @@ func (x *AccountState) GetLastTransactionHash() []byte {
 	return nil
 }
 
-// GlobalLibraries is the masterchain global library dictionary the node
-// applied most recently.
+// GlobalLibraries is a masterchain global library dictionary; it is stored in
+// the GTON_LIBRARIES key-value bucket under its hex hash.
 type GlobalLibraries struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Hash          []byte                 `protobuf:"bytes,1,opt,name=hash,proto3" json:"hash,omitempty"`
@@ -361,7 +193,7 @@ type GlobalLibraries struct {
 
 func (x *GlobalLibraries) Reset() {
 	*x = GlobalLibraries{}
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[6]
+	mi := &file_api_anton_v1_ingest_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -373,7 +205,7 @@ func (x *GlobalLibraries) String() string {
 func (*GlobalLibraries) ProtoMessage() {}
 
 func (x *GlobalLibraries) ProtoReflect() protoreflect.Message {
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[6]
+	mi := &file_api_anton_v1_ingest_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -386,7 +218,7 @@ func (x *GlobalLibraries) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GlobalLibraries.ProtoReflect.Descriptor instead.
 func (*GlobalLibraries) Descriptor() ([]byte, []int) {
-	return file_api_anton_v1_ingest_proto_rawDescGZIP(), []int{6}
+	return file_api_anton_v1_ingest_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *GlobalLibraries) GetHash() []byte {
@@ -412,8 +244,8 @@ type AppliedBlock struct {
 	ProofBoc        []byte                 `protobuf:"bytes,5,opt,name=proof_boc,json=proofBoc,proto3" json:"proof_boc,omitempty"`
 	Shards          []*BlockId             `protobuf:"bytes,6,rep,name=shards,proto3" json:"shards,omitempty"`
 	Accounts        []*AccountState        `protobuf:"bytes,7,rep,name=accounts,proto3" json:"accounts,omitempty"`
-	// global_libraries_boc is set only when global_libraries_hash differs from
-	// the previous master block's; the hash itself is set on every master.
+	// global_libraries_boc is set when the dictionary changed since the last
+	// one the extension stored; the hash is set on every enriched master.
 	GlobalLibrariesBoc  []byte `protobuf:"bytes,9,opt,name=global_libraries_boc,json=globalLibrariesBoc,proto3" json:"global_libraries_boc,omitempty"`
 	ObservedAtUnixMilli int64  `protobuf:"varint,10,opt,name=observed_at_unix_milli,json=observedAtUnixMilli,proto3" json:"observed_at_unix_milli,omitempty"`
 	GlobalLibrariesHash []byte `protobuf:"bytes,11,opt,name=global_libraries_hash,json=globalLibrariesHash,proto3" json:"global_libraries_hash,omitempty"`
@@ -423,7 +255,7 @@ type AppliedBlock struct {
 
 func (x *AppliedBlock) Reset() {
 	*x = AppliedBlock{}
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[7]
+	mi := &file_api_anton_v1_ingest_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -435,7 +267,7 @@ func (x *AppliedBlock) String() string {
 func (*AppliedBlock) ProtoMessage() {}
 
 func (x *AppliedBlock) ProtoReflect() protoreflect.Message {
-	mi := &file_api_anton_v1_ingest_proto_msgTypes[7]
+	mi := &file_api_anton_v1_ingest_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -448,7 +280,7 @@ func (x *AppliedBlock) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppliedBlock.ProtoReflect.Descriptor instead.
 func (*AppliedBlock) Descriptor() ([]byte, []int) {
-	return file_api_anton_v1_ingest_proto_rawDescGZIP(), []int{7}
+	return file_api_anton_v1_ingest_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *AppliedBlock) GetEventId() string {
@@ -525,14 +357,7 @@ var File_api_anton_v1_ingest_proto protoreflect.FileDescriptor
 
 const file_api_anton_v1_ingest_proto_rawDesc = "" +
 	"\n" +
-	"\x19api/anton/v1/ingest.proto\x12\banton.v1\"\a\n" +
-	"\x05Empty\"%\n" +
-	"\rMasterRequest\x12\x14\n" +
-	"\x05seqno\x18\x01 \x01(\rR\x05seqno\"7\n" +
-	"\fBlockRequest\x12'\n" +
-	"\x05block\x18\x01 \x01(\v2\x11.anton.v1.BlockIdR\x05block\".\n" +
-	"\x16ProcessedMasterRequest\x12\x14\n" +
-	"\x05seqno\x18\x01 \x01(\rR\x05seqno\"\x8d\x01\n" +
+	"\x19api/anton/v1/ingest.proto\x12\banton.v1\"\x8d\x01\n" +
 	"\aBlockId\x12\x1c\n" +
 	"\tworkchain\x18\x01 \x01(\x05R\tworkchain\x12\x14\n" +
 	"\x05shard\x18\x02 \x01(\x03R\x05shard\x12\x14\n" +
@@ -560,16 +385,7 @@ const file_api_anton_v1_ingest_proto_rawDesc = "" +
 	"\x14global_libraries_boc\x18\t \x01(\fR\x12globalLibrariesBoc\x123\n" +
 	"\x16observed_at_unix_milli\x18\n" +
 	" \x01(\x03R\x13observedAtUnixMilli\x122\n" +
-	"\x15global_libraries_hash\x18\v \x01(\fR\x13globalLibrariesHashJ\x04\b\b\x10\tR\x15blockchain_config_boc2\xc9\x03\n" +
-	"\vBlockSource\x12:\n" +
-	"\fLookupMaster\x12\x17.anton.v1.MasterRequest\x1a\x11.anton.v1.BlockId\x128\n" +
-	"\n" +
-	"WaitMaster\x12\x17.anton.v1.MasterRequest\x1a\x11.anton.v1.BlockId\x12K\n" +
-	"\x16SubscribeAppliedBlocks\x12\x17.anton.v1.MasterRequest\x1a\x16.anton.v1.AppliedBlock0\x01\x12:\n" +
-	"\bGetBlock\x12\x16.anton.v1.BlockRequest\x1a\x16.anton.v1.AppliedBlock\x123\n" +
-	"\rCurrentMaster\x12\x0f.anton.v1.Empty\x1a\x11.anton.v1.BlockId\x12D\n" +
-	"\x0fProcessedMaster\x12 .anton.v1.ProcessedMasterRequest\x1a\x0f.anton.v1.Empty\x12@\n" +
-	"\x12GetGlobalLibraries\x12\x0f.anton.v1.Empty\x1a\x19.anton.v1.GlobalLibrariesB2Z0github.com/tonindexer/anton/api/anton/v1;antonv1b\x06proto3"
+	"\x15global_libraries_hash\x18\v \x01(\fR\x13globalLibrariesHashJ\x04\b\b\x10\tR\x15blockchain_config_bocB2Z0github.com/tonindexer/anton/api/anton/v1;antonv1b\x06proto3"
 
 var (
 	file_api_anton_v1_ingest_proto_rawDescOnce sync.Once
@@ -583,42 +399,23 @@ func file_api_anton_v1_ingest_proto_rawDescGZIP() []byte {
 	return file_api_anton_v1_ingest_proto_rawDescData
 }
 
-var file_api_anton_v1_ingest_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_api_anton_v1_ingest_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_api_anton_v1_ingest_proto_goTypes = []any{
-	(*Empty)(nil),                  // 0: anton.v1.Empty
-	(*MasterRequest)(nil),          // 1: anton.v1.MasterRequest
-	(*BlockRequest)(nil),           // 2: anton.v1.BlockRequest
-	(*ProcessedMasterRequest)(nil), // 3: anton.v1.ProcessedMasterRequest
-	(*BlockId)(nil),                // 4: anton.v1.BlockId
-	(*AccountState)(nil),           // 5: anton.v1.AccountState
-	(*GlobalLibraries)(nil),        // 6: anton.v1.GlobalLibraries
-	(*AppliedBlock)(nil),           // 7: anton.v1.AppliedBlock
+	(*BlockId)(nil),         // 0: anton.v1.BlockId
+	(*AccountState)(nil),    // 1: anton.v1.AccountState
+	(*GlobalLibraries)(nil), // 2: anton.v1.GlobalLibraries
+	(*AppliedBlock)(nil),    // 3: anton.v1.AppliedBlock
 }
 var file_api_anton_v1_ingest_proto_depIdxs = []int32{
-	4,  // 0: anton.v1.BlockRequest.block:type_name -> anton.v1.BlockId
-	4,  // 1: anton.v1.AppliedBlock.block:type_name -> anton.v1.BlockId
-	4,  // 2: anton.v1.AppliedBlock.inclusion_master:type_name -> anton.v1.BlockId
-	4,  // 3: anton.v1.AppliedBlock.shards:type_name -> anton.v1.BlockId
-	5,  // 4: anton.v1.AppliedBlock.accounts:type_name -> anton.v1.AccountState
-	1,  // 5: anton.v1.BlockSource.LookupMaster:input_type -> anton.v1.MasterRequest
-	1,  // 6: anton.v1.BlockSource.WaitMaster:input_type -> anton.v1.MasterRequest
-	1,  // 7: anton.v1.BlockSource.SubscribeAppliedBlocks:input_type -> anton.v1.MasterRequest
-	2,  // 8: anton.v1.BlockSource.GetBlock:input_type -> anton.v1.BlockRequest
-	0,  // 9: anton.v1.BlockSource.CurrentMaster:input_type -> anton.v1.Empty
-	3,  // 10: anton.v1.BlockSource.ProcessedMaster:input_type -> anton.v1.ProcessedMasterRequest
-	0,  // 11: anton.v1.BlockSource.GetGlobalLibraries:input_type -> anton.v1.Empty
-	4,  // 12: anton.v1.BlockSource.LookupMaster:output_type -> anton.v1.BlockId
-	4,  // 13: anton.v1.BlockSource.WaitMaster:output_type -> anton.v1.BlockId
-	7,  // 14: anton.v1.BlockSource.SubscribeAppliedBlocks:output_type -> anton.v1.AppliedBlock
-	7,  // 15: anton.v1.BlockSource.GetBlock:output_type -> anton.v1.AppliedBlock
-	4,  // 16: anton.v1.BlockSource.CurrentMaster:output_type -> anton.v1.BlockId
-	0,  // 17: anton.v1.BlockSource.ProcessedMaster:output_type -> anton.v1.Empty
-	6,  // 18: anton.v1.BlockSource.GetGlobalLibraries:output_type -> anton.v1.GlobalLibraries
-	12, // [12:19] is the sub-list for method output_type
-	5,  // [5:12] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	0, // 0: anton.v1.AppliedBlock.block:type_name -> anton.v1.BlockId
+	0, // 1: anton.v1.AppliedBlock.inclusion_master:type_name -> anton.v1.BlockId
+	0, // 2: anton.v1.AppliedBlock.shards:type_name -> anton.v1.BlockId
+	1, // 3: anton.v1.AppliedBlock.accounts:type_name -> anton.v1.AccountState
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_api_anton_v1_ingest_proto_init() }
@@ -632,9 +429,9 @@ func file_api_anton_v1_ingest_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_anton_v1_ingest_proto_rawDesc), len(file_api_anton_v1_ingest_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   4,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   0,
 		},
 		GoTypes:           file_api_anton_v1_ingest_proto_goTypes,
 		DependencyIndexes: file_api_anton_v1_ingest_proto_depIdxs,

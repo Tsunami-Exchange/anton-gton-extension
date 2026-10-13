@@ -4,30 +4,6 @@ package anton.v1;
 
 option go_package = "github.com/tonindexer/anton/api/anton/v1;antonv1";
 
-service BlockSource {
-  rpc LookupMaster(MasterRequest) returns (BlockId);
-  rpc WaitMaster(MasterRequest) returns (BlockId);
-  rpc SubscribeAppliedBlocks(MasterRequest) returns (stream AppliedBlock);
-  rpc GetBlock(BlockRequest) returns (AppliedBlock);
-  rpc CurrentMaster(Empty) returns (BlockId);
-  rpc ProcessedMaster(ProcessedMasterRequest) returns (Empty);
-  rpc GetGlobalLibraries(Empty) returns (GlobalLibraries);
-}
-
-message Empty {}
-
-message MasterRequest {
-  uint32 seqno = 1;
-}
-
-message BlockRequest {
-  BlockId block = 1;
-}
-
-message ProcessedMasterRequest {
-  uint32 seqno = 1;
-}
-
 message BlockId {
   int32 workchain = 1;
   int64 shard = 2;
@@ -45,8 +21,8 @@ message AccountState {
   bytes last_transaction_hash = 6;
 }
 
-// GlobalLibraries is the masterchain global library dictionary the node
-// applied most recently.
+// GlobalLibraries is a masterchain global library dictionary; it is stored in
+// the GTON_LIBRARIES key-value bucket under its hex hash.
 message GlobalLibraries {
   bytes hash = 1;
   bytes boc = 2;
@@ -63,8 +39,8 @@ message AppliedBlock {
   bytes proof_boc = 5;
   repeated BlockId shards = 6;
   repeated AccountState accounts = 7;
-  // global_libraries_boc is set only when global_libraries_hash differs from
-  // the previous master block's; the hash itself is set on every master.
+  // global_libraries_boc is set when the dictionary changed since the last
+  // one the extension stored; the hash is set on every enriched master.
   bytes global_libraries_boc = 9;
   int64 observed_at_unix_milli = 10;
   bytes global_libraries_hash = 11;
