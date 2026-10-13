@@ -25,6 +25,7 @@ const (
 	BlockSource_GetBlock_FullMethodName               = "/anton.v1.BlockSource/GetBlock"
 	BlockSource_CurrentMaster_FullMethodName          = "/anton.v1.BlockSource/CurrentMaster"
 	BlockSource_ProcessedMaster_FullMethodName        = "/anton.v1.BlockSource/ProcessedMaster"
+	BlockSource_GetGlobalLibraries_FullMethodName     = "/anton.v1.BlockSource/GetGlobalLibraries"
 )
 
 // BlockSourceClient is the client API for BlockSource service.
@@ -37,6 +38,7 @@ type BlockSourceClient interface {
 	GetBlock(ctx context.Context, in *BlockRequest, opts ...grpc.CallOption) (*AppliedBlock, error)
 	CurrentMaster(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*BlockId, error)
 	ProcessedMaster(ctx context.Context, in *ProcessedMasterRequest, opts ...grpc.CallOption) (*Empty, error)
+	GetGlobalLibraries(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*GlobalLibraries, error)
 }
 
 type blockSourceClient struct {
@@ -116,6 +118,16 @@ func (c *blockSourceClient) ProcessedMaster(ctx context.Context, in *ProcessedMa
 	return out, nil
 }
 
+func (c *blockSourceClient) GetGlobalLibraries(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*GlobalLibraries, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GlobalLibraries)
+	err := c.cc.Invoke(ctx, BlockSource_GetGlobalLibraries_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BlockSourceServer is the server API for BlockSource service.
 // All implementations must embed UnimplementedBlockSourceServer
 // for forward compatibility.
@@ -126,6 +138,7 @@ type BlockSourceServer interface {
 	GetBlock(context.Context, *BlockRequest) (*AppliedBlock, error)
 	CurrentMaster(context.Context, *Empty) (*BlockId, error)
 	ProcessedMaster(context.Context, *ProcessedMasterRequest) (*Empty, error)
+	GetGlobalLibraries(context.Context, *Empty) (*GlobalLibraries, error)
 	mustEmbedUnimplementedBlockSourceServer()
 }
 
@@ -153,6 +166,9 @@ func (UnimplementedBlockSourceServer) CurrentMaster(context.Context, *Empty) (*B
 }
 func (UnimplementedBlockSourceServer) ProcessedMaster(context.Context, *ProcessedMasterRequest) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method ProcessedMaster not implemented")
+}
+func (UnimplementedBlockSourceServer) GetGlobalLibraries(context.Context, *Empty) (*GlobalLibraries, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetGlobalLibraries not implemented")
 }
 func (UnimplementedBlockSourceServer) mustEmbedUnimplementedBlockSourceServer() {}
 func (UnimplementedBlockSourceServer) testEmbeddedByValue()                     {}
@@ -276,6 +292,24 @@ func _BlockSource_ProcessedMaster_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BlockSource_GetGlobalLibraries_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlockSourceServer).GetGlobalLibraries(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BlockSource_GetGlobalLibraries_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlockSourceServer).GetGlobalLibraries(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BlockSource_ServiceDesc is the grpc.ServiceDesc for BlockSource service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -302,6 +336,10 @@ var BlockSource_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ProcessedMaster",
 			Handler:    _BlockSource_ProcessedMaster_Handler,
+		},
+		{
+			MethodName: "GetGlobalLibraries",
+			Handler:    _BlockSource_GetGlobalLibraries_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

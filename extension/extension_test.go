@@ -15,12 +15,16 @@ import (
 	"github.com/xssnick/tonutils-go/tlb"
 	"github.com/xssnick/tonutils-go/ton"
 	"github.com/xssnick/tonutils-go/tvm/cell"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	antonv1 "github.com/Tsunami-Exchange/anton-gton-extension/api/anton/v1"
 )
 
 func TestOnBlockAppliedStoresCatchUpBlockUntilAcknowledged(t *testing.T) {
 	store, err := newBlockStore(t.TempDir())
 	require.NoError(t, err)
-	extension := &Extension{store: store, log: zerolog.Nop()}
+	extension := &Extension{store: store, libraries: &librariesCache{}, log: zerolog.Nop()}
 	id := ton.BlockIDExt{
 		Workchain: -1,
 		Shard:     -1 << 63,
@@ -47,7 +51,7 @@ func TestOnBlockAppliedSkipsBlocksAlreadyAcknowledged(t *testing.T) {
 	store, err := newBlockStore(t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, store.processedMaster(100))
-	extension := &Extension{store: store, log: zerolog.Nop()}
+	extension := &Extension{store: store, libraries: &librariesCache{}, log: zerolog.Nop()}
 	master := ton.BlockIDExt{
 		Workchain: -1,
 		Shard:     -1 << 63,
@@ -84,7 +88,7 @@ func TestOnBlockAppliedSkipsBlocksAlreadyAcknowledged(t *testing.T) {
 func TestOnBlockAppliedStoresRawEnvelopeWhenEnrichmentFails(t *testing.T) {
 	store, err := newBlockStore(t.TempDir())
 	require.NoError(t, err)
-	extension := &Extension{store: store, log: zerolog.Nop()}
+	extension := &Extension{store: store, libraries: &librariesCache{}, log: zerolog.Nop()}
 	id := ton.BlockIDExt{
 		Workchain: -1,
 		Shard:     -1 << 63,
@@ -191,4 +195,54 @@ func TestMasterBlockShardsReadsBlockExtra(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.True(t, got[0].Equals(&shard))
+}
+
+func TestLibrariesCacheDropsRepeatedDictionaryBody(t *testing.T) {
+	cache := &librariesCache{}
+	hash := bytes.Repeat([]byte{7}, 32)
+	first := &antonv1.AppliedBlock{GlobalLibrariesHash: hash, GlobalLibrariesBoc: []byte{1, 2, 3}}
+	second := &antonv1.AppliedBlock{GlobalLibrariesHash: hash, GlobalLibrariesBoc: []byte{1, 2, 3}}
+
+	cache.prune(first)
+	cache.prune(second)
+
+	require.Equal(t, []byte{1, 2, 3}, first.GlobalLibrariesBoc, "first master carries the dictionary")
+	require.Empty(t, second.GlobalLibrariesBoc, "unchanged dictionary is not repeated")
+	require.Equal(t, hash, second.GlobalLibrariesHash, "hash is kept so the consumer can detect a gap")
+}
+
+func TestLibrariesCacheKeepsChangedDictionaryBody(t *testing.T) {
+	cache := &librariesCache{}
+	first := &antonv1.AppliedBlock{GlobalLibrariesHash: bytes.Repeat([]byte{7}, 32), GlobalLibrariesBoc: []byte{1}}
+	second := &antonv1.AppliedBlock{GlobalLibrariesHash: bytes.Repeat([]byte{8}, 32), GlobalLibrariesBoc: []byte{2}}
+
+	cache.prune(first)
+	cache.prune(second)
+
+	require.Equal(t, []byte{2}, second.GlobalLibrariesBoc)
+}
+
+func TestLibrariesCacheIgnoresBlocksWithoutDictionary(t *testing.T) {
+	cache := &librariesCache{}
+	cache.prune(&antonv1.AppliedBlock{GlobalLibrariesHash: bytes.Repeat([]byte{7}, 32), GlobalLibrariesBoc: []byte{1}})
+	cache.prune(&antonv1.AppliedBlock{}) // shard block
+
+	current := cache.current()
+	require.NotNil(t, current)
+	require.Equal(t, []byte{1}, current.Boc)
+}
+
+func TestGetGlobalLibrariesServesLatestDictionary(t *testing.T) {
+	cache := &librariesCache{}
+	server := &sourceServer{libraries: cache}
+
+	_, err := server.GetGlobalLibraries(context.Background(), &antonv1.Empty{})
+	require.Equal(t, codes.NotFound, status.Code(err), "nothing applied yet")
+
+	hash := bytes.Repeat([]byte{7}, 32)
+	cache.prune(&antonv1.AppliedBlock{GlobalLibrariesHash: hash, GlobalLibrariesBoc: []byte{1, 2}})
+	libraries, err := server.GetGlobalLibraries(context.Background(), &antonv1.Empty{})
+	require.NoError(t, err)
+	require.Equal(t, hash, libraries.Hash)
+	require.Equal(t, []byte{1, 2}, libraries.Boc)
 }

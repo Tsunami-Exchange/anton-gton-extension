@@ -74,21 +74,12 @@ func addMasterData(block *tlb.Block, state *tlb.ShardStateUnsplit, envelope *ant
 		envelope.Shards = append(envelope.Shards, protoBlockID(*shard))
 	}
 
-	extra, err := masterStateExtra(state)
-	if err != nil {
-		return fmt.Errorf("load masterchain state extra: %w", err)
-	}
-	config, err := tlb.ToCell(extra.ConfigParams.Config.Params)
-	if err != nil {
-		return fmt.Errorf("serialize blockchain config: %w", err)
-	}
-	envelope.BlockchainConfigBoc = config.ToBOC()
-
 	libraries, err := globalLibraries(state)
 	if err != nil {
 		return fmt.Errorf("load global libraries: %w", err)
 	}
 	if libraries != nil && libraries.AsCell() != nil {
+		envelope.GlobalLibrariesHash = libraries.AsCell().Hash()
 		envelope.GlobalLibrariesBoc = libraries.AsCell().ToBOC()
 	}
 	return nil
@@ -151,21 +142,6 @@ func appliedAccountState(state *tlb.ShardStateUnsplit, workchain int32, accountI
 		account.StateBoc = shardAccount.Account.ToBOC()
 	}
 	return account, nil
-}
-
-func masterStateExtra(state *tlb.ShardStateUnsplit) (*tlb.McStateExtra, error) {
-	if state.McStateExtra == nil {
-		return nil, fmt.Errorf("state is missing mc_state_extra")
-	}
-	loader, err := state.McStateExtra.BeginParse()
-	if err != nil {
-		return nil, err
-	}
-	var extra tlb.McStateExtra
-	if err = tlb.LoadFromCell(&extra, loader); err != nil {
-		return nil, err
-	}
-	return &extra, nil
 }
 
 func globalLibraries(state *tlb.ShardStateUnsplit) (*cell.Dictionary, error) {

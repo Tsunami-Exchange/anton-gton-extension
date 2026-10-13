@@ -1,10 +1,12 @@
 package extension
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
 	"os"
+	"sync"
 
 	"github.com/rs/zerolog"
 	"github.com/xssnick/gton/service/hooks"
@@ -19,9 +21,10 @@ import (
 const maxMessageSize = 64 << 20
 
 type Extension struct {
-	listen string
-	store  *blockStore
-	log    zerolog.Logger
+	listen    string
+	store     *blockStore
+	libraries *librariesCache
+	log       zerolog.Logger
 
 	listener net.Listener
 	server   *grpc.Server
@@ -42,7 +45,7 @@ func New(node hooks.Node) (hooks.Extension, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Extension{listen: listen, store: store, log: node.Logger}, nil
+	return &Extension{listen: listen, store: store, libraries: &librariesCache{}, log: node.Logger}, nil
 }
 
 func (e *Extension) Start(context.Context) error {
@@ -51,7 +54,7 @@ func (e *Extension) Start(context.Context) error {
 		return fmt.Errorf("listen for Anton on %s: %w", e.listen, err)
 	}
 	server := grpc.NewServer(grpc.MaxSendMsgSize(maxMessageSize))
-	antonv1.RegisterBlockSourceServer(server, &sourceServer{store: e.store})
+	antonv1.RegisterBlockSourceServer(server, &sourceServer{store: e.store, libraries: e.libraries})
 	e.listener = listener
 	e.server = server
 	go func() { _ = server.Serve(listener) }()
@@ -98,7 +101,42 @@ func (e *Extension) OnBlockApplied(_ context.Context, event hooks.BlockAppliedEv
 		}
 		logEvent.Msg("failed to enrich applied block; storing partial event")
 	}
+	e.libraries.prune(envelope)
 	return e.store.put(envelope)
+}
+
+// librariesCache remembers the global library dictionary carried by the latest
+// master block, so unchanged dictionaries are not repeated in every envelope
+// and a consumer joining mid-stream can fetch the current one.
+type librariesCache struct {
+	mu   sync.Mutex
+	hash []byte
+	boc  []byte
+}
+
+// prune records the dictionary a master envelope carries and strips its body
+// when the previous master already carried the same one.
+func (c *librariesCache) prune(event *antonv1.AppliedBlock) {
+	if len(event.GlobalLibrariesHash) == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if bytes.Equal(event.GlobalLibrariesHash, c.hash) {
+		event.GlobalLibrariesBoc = nil
+		return
+	}
+	c.hash = bytes.Clone(event.GlobalLibrariesHash)
+	c.boc = bytes.Clone(event.GlobalLibrariesBoc)
+}
+
+func (c *librariesCache) current() *antonv1.GlobalLibraries {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.hash) == 0 {
+		return nil
+	}
+	return &antonv1.GlobalLibraries{Hash: bytes.Clone(c.hash), Boc: bytes.Clone(c.boc)}
 }
 
 // isAcknowledged reports whether the block belongs to a master the consumer
@@ -124,7 +162,8 @@ func (*Extension) OnBlockReceived(context.Context, hooks.BlockReceivedEvent) err
 
 type sourceServer struct {
 	antonv1.UnimplementedBlockSourceServer
-	store *blockStore
+	store     *blockStore
+	libraries *librariesCache
 }
 
 var _ antonv1.BlockSourceServer = (*sourceServer)(nil)
@@ -169,4 +208,12 @@ func (s *sourceServer) ProcessedMaster(_ context.Context, request *antonv1.Proce
 		return nil, status.Errorf(codes.Internal, "release processed blocks: %v", err)
 	}
 	return &antonv1.Empty{}, nil
+}
+
+func (s *sourceServer) GetGlobalLibraries(context.Context, *antonv1.Empty) (*antonv1.GlobalLibraries, error) {
+	libraries := s.libraries.current()
+	if libraries == nil {
+		return nil, status.Error(codes.NotFound, "global libraries are not available")
+	}
+	return libraries, nil
 }

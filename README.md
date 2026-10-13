@@ -20,9 +20,12 @@ The data flow is stream-first:
    keeps that latest committed master bundle and removes older bundles.
 
 The event contains the raw block and proof BOCs, block identity, inclusion
-master, master shard list, all transaction-account states, blockchain config,
-and global libraries. Anton keeps its liteclient as a fallback for history and
-for related contracts not touched by the block.
+master, master shard list and all transaction-account states. A master event
+also carries the hash of the global library dictionary, and its BOC only when
+the hash changed since the previous master; `GetGlobalLibraries` returns the
+current dictionary for a consumer joining mid-stream. Anton keeps its
+liteclient as a fallback for history and for related contracts not touched by
+the block.
 
 ## Versions
 
