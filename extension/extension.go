@@ -25,6 +25,7 @@ const (
 type Extension struct {
 	listen string
 	store  *blockStore
+	node   *nodeSource
 	log    zerolog.Logger
 
 	listener net.Listener
@@ -46,7 +47,7 @@ func New(node hooks.Node) (hooks.Extension, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Extension{listen: listen, store: store, log: node.Logger}, nil
+	return &Extension{listen: listen, store: store, node: newNodeSource(node.Store, node.Logger), log: node.Logger}, nil
 }
 
 func (e *Extension) Start(context.Context) error {
@@ -55,7 +56,7 @@ func (e *Extension) Start(context.Context) error {
 		return fmt.Errorf("listen for Anton on %s: %w", e.listen, err)
 	}
 	server := grpc.NewServer(grpc.MaxSendMsgSize(maxMessageSize))
-	antonv1.RegisterBlockSourceServer(server, &sourceServer{store: e.store})
+	antonv1.RegisterBlockSourceServer(server, &sourceServer{store: e.store, node: e.node})
 	e.listener = listener
 	e.server = server
 	go func() { _ = server.Serve(listener) }()
@@ -118,6 +119,7 @@ func (*Extension) OnBlockReceived(context.Context, hooks.BlockReceivedEvent) err
 type sourceServer struct {
 	antonv1.UnimplementedBlockSourceServer
 	store *blockStore
+	node  *nodeSource
 }
 
 var _ antonv1.BlockSourceServer = (*sourceServer)(nil)
@@ -139,12 +141,34 @@ func (s *sourceServer) WaitMaster(ctx context.Context, request *antonv1.MasterRe
 }
 
 func (s *sourceServer) SubscribeAppliedBlocks(request *antonv1.MasterRequest, stream grpc.ServerStreamingServer[antonv1.AppliedBlock]) error {
-	return s.store.subscribe(stream.Context(), request.Seqno, stream.Send)
+	return s.subscribe(stream.Context(), request.Seqno, stream.Send)
+}
+
+// subscribe replays masters the store never saw from the node database, then
+// tails the store. Without replay a consumer that restarts behind the live
+// window has to rebuild every missing block through liteservers.
+func (s *sourceServer) subscribe(ctx context.Context, seqNo uint32, send func(*antonv1.AppliedBlock) error) error {
+	if s.node != nil {
+		var err error
+		seqNo, err = s.node.replay(ctx, seqNo, s.store.earliestMaster, send)
+		if err != nil {
+			return err
+		}
+	}
+	return s.store.subscribe(ctx, seqNo, send)
 }
 
 func (s *sourceServer) GetBlock(ctx context.Context, request *antonv1.BlockRequest) (*antonv1.AppliedBlock, error) {
 	if request == nil || validateBlockID(request.Block) != nil {
 		return nil, status.Error(codes.InvalidArgument, "valid block id is required")
+	}
+	if event := s.store.block(request.Block); event != nil {
+		return event, nil
+	}
+	if s.node != nil {
+		if event, err := s.node.appliedBlock(ctx, blockIDFromProto(request.Block)); err == nil {
+			return event, nil
+		}
 	}
 	return s.store.waitBlock(ctx, request.Block)
 }

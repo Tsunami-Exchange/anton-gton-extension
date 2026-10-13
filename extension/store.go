@@ -108,6 +108,16 @@ func (s *blockStore) put(event *antonv1.AppliedBlock) error {
 	return nil
 }
 
+func (s *blockStore) block(id *antonv1.BlockId) *antonv1.AppliedBlock {
+	s.mu.RLock()
+	item := s.blocks[blockKey(id)]
+	s.mu.RUnlock()
+	if item == nil {
+		return nil
+	}
+	return proto.Clone(item.event).(*antonv1.AppliedBlock)
+}
+
 func (s *blockStore) waitBlock(ctx context.Context, id *antonv1.BlockId) (*antonv1.AppliedBlock, error) {
 	key := blockKey(id)
 	for {
@@ -215,6 +225,20 @@ func (s *blockStore) latestMaster() *antonv1.AppliedBlock {
 		return nil
 	}
 	return proto.Clone(latest.event).(*antonv1.AppliedBlock)
+}
+
+func (s *blockStore) earliestMaster() (uint32, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var earliest uint32
+	found := false
+	for seqNo := range s.masters {
+		if !found || seqNo < earliest {
+			earliest = seqNo
+			found = true
+		}
+	}
+	return earliest, found
 }
 
 func (s *blockStore) processedMaster(seqNo uint32) error {

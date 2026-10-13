@@ -11,9 +11,13 @@ The data flow is stream-first:
 2. The gRPC stream replays stored events and tails new full block envelopes.
 3. Anton caches a full master-and-shard bundle before indexing it, so account
    states touched by the block do not require separate network calls.
-4. Missing or historical blocks fall back to the unary gRPC API and then to
-   Anton's existing liteservers.
-5. After committing a master block, Anton acknowledges the seqno. The store
+4. A subscription that starts behind the live window is replayed from the
+   node database first: masters from the requested seqno up to the oldest
+   stored one, each preceded by its top shard blocks, then the stream tails
+   the store. Blocks the node no longer holds end the replay early.
+5. Missing or historical blocks fall back to the unary gRPC API, which also
+   reads from the node database, and then to Anton's existing liteservers.
+6. After committing a master block, Anton acknowledges the seqno. The store
    keeps that latest committed master bundle and removes older bundles.
 
 The event contains the raw block and proof BOCs, block identity, inclusion
