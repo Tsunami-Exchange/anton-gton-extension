@@ -3,10 +3,12 @@ package extension
 import (
 	"bytes"
 	"context"
+	"errors"
 	"math/big"
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 	"github.com/xssnick/gton/service/hooks"
@@ -15,16 +17,31 @@ import (
 	"github.com/xssnick/tonutils-go/tlb"
 	"github.com/xssnick/tonutils-go/ton"
 	"github.com/xssnick/tonutils-go/tvm/cell"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	antonv1 "github.com/Tsunami-Exchange/anton-gton-extension/api/anton/v1"
 )
 
-func TestOnBlockAppliedStoresCatchUpBlockUntilAcknowledged(t *testing.T) {
-	store, err := newBlockStore(t.TempDir())
+func testExtension(t *testing.T) (*Extension, jetstream.Stream) {
+	t.Helper()
+	stream := testStream(t, t.TempDir())
+	return &Extension{stream: stream, libraries: &librariesCache{}, log: zerolog.Nop()}, readStream(t, stream)
+}
+
+func storedBlock(t *testing.T, s jetstream.Stream, subject string) *antonv1.AppliedBlock {
+	t.Helper()
+	raw, err := s.GetLastMsgForSubject(context.Background(), subject)
+	if errors.Is(err, jetstream.ErrMsgNotFound) {
+		return nil
+	}
 	require.NoError(t, err)
-	extension := &Extension{store: store, libraries: &librariesCache{}, log: zerolog.Nop()}
+	event := new(antonv1.AppliedBlock)
+	require.NoError(t, proto.Unmarshal(raw.Data, event))
+	return event
+}
+
+func TestOnBlockAppliedPublishesCatchUpBlock(t *testing.T) {
+	extension, s := testExtension(t)
 	id := ton.BlockIDExt{
 		Workchain: -1,
 		Shard:     -1 << 63,
@@ -42,32 +59,31 @@ func TestOnBlockAppliedStoresCatchUpBlockUntilAcknowledged(t *testing.T) {
 	}
 
 	// An hour-old block applied during node catch-up is still news to the
-	// consumer: nothing has been acknowledged yet.
+	// stream: nothing has been published yet.
 	require.NoError(t, extension.OnBlockApplied(context.Background(), event))
-	require.NotNil(t, store.master(id.SeqNo))
+	require.NotNil(t, storedBlock(t, s, "gton.blocks.1.master"))
 }
 
-func TestOnBlockAppliedSkipsBlocksAlreadyAcknowledged(t *testing.T) {
-	store, err := newBlockStore(t.TempDir())
-	require.NoError(t, err)
-	require.NoError(t, store.processedMaster(100))
-	extension := &Extension{store: store, libraries: &librariesCache{}, log: zerolog.Nop()}
+func TestOnBlockAppliedSkipsBlocksOfOlderMasters(t *testing.T) {
+	extension, s := testExtension(t)
+	now := uint32(time.Now().Unix())
+	newer := ton.BlockIDExt{
+		Workchain: -1, Shard: -1 << 63, SeqNo: 100,
+		RootHash: bytes.Repeat([]byte{5}, 32), FileHash: bytes.Repeat([]byte{6}, 32),
+	}
+	require.NoError(t, extension.OnBlockApplied(context.Background(), hooks.BlockAppliedEvent{
+		BlockBOC: []byte{1}, BlockRoot: cell.BeginCell().EndCell(),
+		Meta: &storage.BlockMeta{ID: newer, GenUTime: now},
+	}))
+
 	master := ton.BlockIDExt{
-		Workchain: -1,
-		Shard:     -1 << 63,
-		SeqNo:     99,
-		RootHash:  bytes.Repeat([]byte{1}, 32),
-		FileHash:  bytes.Repeat([]byte{2}, 32),
+		Workchain: -1, Shard: -1 << 63, SeqNo: 99,
+		RootHash: bytes.Repeat([]byte{1}, 32), FileHash: bytes.Repeat([]byte{2}, 32),
 	}
 	shard := ton.BlockIDExt{
-		Workchain: 0,
-		Shard:     -1 << 63,
-		SeqNo:     42,
-		RootHash:  bytes.Repeat([]byte{3}, 32),
-		FileHash:  bytes.Repeat([]byte{4}, 32),
+		Workchain: 0, Shard: -1 << 63, SeqNo: 42,
+		RootHash: bytes.Repeat([]byte{3}, 32), FileHash: bytes.Repeat([]byte{4}, 32),
 	}
-	now := uint32(time.Now().Unix())
-
 	require.NoError(t, extension.OnBlockApplied(context.Background(), hooks.BlockAppliedEvent{
 		BlockBOC: []byte{1}, BlockRoot: cell.BeginCell().EndCell(),
 		Meta: &storage.BlockMeta{ID: master, GenUTime: now},
@@ -78,17 +94,12 @@ func TestOnBlockAppliedSkipsBlocksAlreadyAcknowledged(t *testing.T) {
 		InclusionMasterRef: &master,
 	}))
 
-	require.Nil(t, store.master(master.SeqNo), "master below the acknowledged seqno is not stored")
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	_, err = store.waitBlock(ctx, protoBlockID(shard))
-	require.ErrorIs(t, err, context.DeadlineExceeded, "shard included by it is not stored either")
+	require.Nil(t, storedBlock(t, s, "gton.blocks.99.master"), "master below the published seqno is not published")
+	require.Nil(t, storedBlock(t, s, "gton.blocks.99.shard"), "shard included by it is not published either")
 }
 
-func TestOnBlockAppliedStoresRawEnvelopeWhenEnrichmentFails(t *testing.T) {
-	store, err := newBlockStore(t.TempDir())
-	require.NoError(t, err)
-	extension := &Extension{store: store, libraries: &librariesCache{}, log: zerolog.Nop()}
+func TestOnBlockAppliedPublishesRawEnvelopeWhenEnrichmentFails(t *testing.T) {
+	extension, s := testExtension(t)
 	id := ton.BlockIDExt{
 		Workchain: -1,
 		Shard:     -1 << 63,
@@ -107,7 +118,7 @@ func TestOnBlockAppliedStoresRawEnvelopeWhenEnrichmentFails(t *testing.T) {
 	}
 
 	require.NoError(t, extension.OnBlockApplied(context.Background(), event))
-	stored := store.master(id.SeqNo)
+	stored := storedBlock(t, s, "gton.blocks.80260332.master")
 	require.NotNil(t, stored)
 	require.Equal(t, event.BlockBOC, stored.BlockBoc)
 	require.Equal(t, event.ProofBOC, stored.ProofBoc)
@@ -230,19 +241,4 @@ func TestLibrariesCacheIgnoresBlocksWithoutDictionary(t *testing.T) {
 	current := cache.current()
 	require.NotNil(t, current)
 	require.Equal(t, []byte{1}, current.Boc)
-}
-
-func TestGetGlobalLibrariesServesLatestDictionary(t *testing.T) {
-	cache := &librariesCache{}
-	server := &sourceServer{libraries: cache}
-
-	_, err := server.GetGlobalLibraries(context.Background(), &antonv1.Empty{})
-	require.Equal(t, codes.NotFound, status.Code(err), "nothing applied yet")
-
-	hash := bytes.Repeat([]byte{7}, 32)
-	cache.prune(&antonv1.AppliedBlock{GlobalLibrariesHash: hash, GlobalLibrariesBoc: []byte{1, 2}})
-	libraries, err := server.GetGlobalLibraries(context.Background(), &antonv1.Empty{})
-	require.NoError(t, err)
-	require.Equal(t, hash, libraries.Hash)
-	require.Equal(t, []byte{1, 2}, libraries.Boc)
 }
