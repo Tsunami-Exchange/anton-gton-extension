@@ -29,7 +29,8 @@ const (
 	subjectKindShard  = "shard"
 
 	// duplicateWindow is how long JetStream remembers event ids to drop the
-	// repeats of the at-least-once applied hook.
+	// repeats of the at-least-once applied hook; JetStream caps it at the
+	// retention.
 	duplicateWindow = 10 * time.Minute
 	startupTimeout  = 30 * time.Second
 )
@@ -97,7 +98,7 @@ func (s *blockStream) open(ctx context.Context, retention time.Duration) error {
 		Retention:  jetstream.LimitsPolicy,
 		Discard:    jetstream.DiscardOld,
 		MaxAge:     retention,
-		Duplicates: duplicateWindow,
+		Duplicates: min(duplicateWindow, retention),
 	})
 	if err != nil {
 		return fmt.Errorf("create block stream: %w", err)
@@ -113,21 +114,19 @@ func (s *blockStream) open(ctx context.Context, retention time.Duration) error {
 	return err
 }
 
+// lastMasterSeqno returns the seqno of the newest master still in the stream,
+// zero when there is none (empty, or every block expired).
 func lastMasterSeqno(ctx context.Context, stream jetstream.Stream) (uint32, error) {
-	info, err := stream.Info(ctx)
-	if err != nil {
-		return 0, err
-	}
-	if info.State.LastSeq == 0 {
+	last, err := stream.GetLastMsgForSubject(ctx, subjectPrefix+".*."+subjectKindMaster)
+	if errors.Is(err, jetstream.ErrMsgNotFound) {
 		return 0, nil
 	}
-	last, err := stream.GetMsg(ctx, info.State.LastSeq)
 	if err != nil {
-		return 0, fmt.Errorf("read last stored block: %w", err)
+		return 0, fmt.Errorf("read last stored master: %w", err)
 	}
 	seqNo, err := strconv.ParseUint(last.Header.Get(headerMasterSeqno), 10, 32)
 	if err != nil {
-		return 0, fmt.Errorf("last stored block has no master seqno: %w", err)
+		return 0, fmt.Errorf("last stored master has no seqno: %w", err)
 	}
 	return uint32(seqNo), nil
 }

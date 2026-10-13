@@ -3,6 +3,8 @@ package extension
 import (
 	"fmt"
 
+	"github.com/xssnick/tonutils-go/ton"
+
 	antonv1 "github.com/Tsunami-Exchange/anton-gton-extension/api/anton/v1"
 )
 
@@ -25,4 +27,8 @@ func blockKey(id *antonv1.BlockId) string {
 		return ""
 	}
 	return fmt.Sprintf("%d:%d:%d:%x", id.Workchain, id.Shard, id.Seqno, id.RootHash)
+}
+
+func isMasterBlock(id ton.BlockIDExt) bool {
+	return id.Workchain == -1 && id.Shard == -1<<63
 }

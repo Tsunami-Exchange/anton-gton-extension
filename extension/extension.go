@@ -89,6 +89,13 @@ func (e *Extension) OnBlockApplied(ctx context.Context, event hooks.BlockApplied
 	if isPublished(event, e.stream.publishedMaster()) {
 		return nil
 	}
+	if event.Meta != nil && !isMasterBlock(event.Meta.ID) && event.InclusionMasterRef == nil {
+		// Consumers index shards by the master that includes them; without
+		// one the block cannot be placed in the stream.
+		e.log.Warn().Str("block", storage.FormatBlockRef(event.Meta.ID)).
+			Msg("applied shard block has no inclusion master; skipping extension event")
+		return nil
+	}
 	envelope, err := appliedBlockEnvelope(event)
 	if err != nil {
 		block := "<unknown>"
@@ -104,14 +111,14 @@ func (e *Extension) OnBlockApplied(ctx context.Context, event hooks.BlockApplied
 		}
 		logEvent.Msg("failed to enrich applied block; publishing partial event")
 	}
-	e.libraries.prune(envelope)
-	if len(envelope.GlobalLibrariesBoc) != 0 {
+	if e.libraries.prune(envelope) {
 		if err = e.stream.putLibraries(ctx, &antonv1.GlobalLibraries{
 			Hash: envelope.GlobalLibrariesHash,
 			Boc:  envelope.GlobalLibrariesBoc,
 		}); err != nil {
 			return err
 		}
+		e.libraries.record(envelope)
 	}
 	return e.stream.publish(ctx, envelope)
 }
@@ -138,49 +145,33 @@ func (*Extension) OnBlockReceived(context.Context, hooks.BlockReceivedEvent) err
 	return nil
 }
 
-// librariesCache remembers the global library dictionary carried by the latest
-// master block, so unchanged dictionaries are not repeated in every envelope
-// and a consumer joining mid-stream can fetch the current one.
+// librariesCache remembers the hash of the global library dictionary last
+// stored in the libraries bucket, so unchanged dictionaries are not repeated in
+// every envelope.
 type librariesCache struct {
 	mu   sync.Mutex
 	hash []byte
-	boc  []byte
 }
 
-// prune records the dictionary a master envelope carries and strips its body
-// when the previous master already carried the same one.
-func (c *librariesCache) prune(event *antonv1.AppliedBlock) {
+// prune strips the dictionary body from a master envelope when that
+// dictionary is already stored, and reports whether the envelope carries one
+// that still has to be stored.
+func (c *librariesCache) prune(event *antonv1.AppliedBlock) bool {
 	if len(event.GlobalLibrariesHash) == 0 {
-		return
+		return false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if bytes.Equal(event.GlobalLibrariesHash, c.hash) {
 		event.GlobalLibrariesBoc = nil
-		return
-	}
-	c.hash = bytes.Clone(event.GlobalLibrariesHash)
-	c.boc = bytes.Clone(event.GlobalLibrariesBoc)
-}
-
-func (c *librariesCache) current() *antonv1.GlobalLibraries {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.hash) == 0 {
-		return nil
-	}
-	return &antonv1.GlobalLibraries{Hash: bytes.Clone(c.hash), Boc: bytes.Clone(c.boc)}
-}
-
-// isAcknowledged reports whether the block belongs to a master the consumer
-// has already committed.
-func isAcknowledged(event hooks.BlockAppliedEvent, acked uint32) bool {
-	if event.Meta == nil {
 		return false
 	}
-	inclusion := event.Meta.ID.SeqNo
-	if event.InclusionMasterRef != nil {
-		inclusion = event.InclusionMasterRef.SeqNo
-	}
-	return inclusion < acked
+	return len(event.GlobalLibrariesBoc) != 0
+}
+
+// record marks the envelope's dictionary as stored.
+func (c *librariesCache) record(event *antonv1.AppliedBlock) {
+	c.mu.Lock()
+	c.hash = bytes.Clone(event.GlobalLibrariesHash)
+	c.mu.Unlock()
 }

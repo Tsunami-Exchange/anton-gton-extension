@@ -214,8 +214,9 @@ func TestLibrariesCacheDropsRepeatedDictionaryBody(t *testing.T) {
 	first := &antonv1.AppliedBlock{GlobalLibrariesHash: hash, GlobalLibrariesBoc: []byte{1, 2, 3}}
 	second := &antonv1.AppliedBlock{GlobalLibrariesHash: hash, GlobalLibrariesBoc: []byte{1, 2, 3}}
 
-	cache.prune(first)
-	cache.prune(second)
+	require.True(t, cache.prune(first), "first master carries a new dictionary")
+	cache.record(first)
+	require.False(t, cache.prune(second))
 
 	require.Equal(t, []byte{1, 2, 3}, first.GlobalLibrariesBoc, "first master carries the dictionary")
 	require.Empty(t, second.GlobalLibrariesBoc, "unchanged dictionary is not repeated")
@@ -228,17 +229,52 @@ func TestLibrariesCacheKeepsChangedDictionaryBody(t *testing.T) {
 	second := &antonv1.AppliedBlock{GlobalLibrariesHash: bytes.Repeat([]byte{8}, 32), GlobalLibrariesBoc: []byte{2}}
 
 	cache.prune(first)
-	cache.prune(second)
+	cache.record(first)
+	require.True(t, cache.prune(second))
 
 	require.Equal(t, []byte{2}, second.GlobalLibrariesBoc)
 }
 
+func TestLibrariesCacheKeepsBodyUntilRecorded(t *testing.T) {
+	cache := &librariesCache{}
+	hash := bytes.Repeat([]byte{7}, 32)
+	first := &antonv1.AppliedBlock{GlobalLibrariesHash: hash, GlobalLibrariesBoc: []byte{1}}
+	retry := &antonv1.AppliedBlock{GlobalLibrariesHash: hash, GlobalLibrariesBoc: []byte{1}}
+
+	cache.prune(first) // storing the dictionary failed: nothing recorded
+
+	require.True(t, cache.prune(retry), "the retry still has to store the dictionary")
+	require.Equal(t, []byte{1}, retry.GlobalLibrariesBoc)
+}
+
 func TestLibrariesCacheIgnoresBlocksWithoutDictionary(t *testing.T) {
 	cache := &librariesCache{}
-	cache.prune(&antonv1.AppliedBlock{GlobalLibrariesHash: bytes.Repeat([]byte{7}, 32), GlobalLibrariesBoc: []byte{1}})
-	cache.prune(&antonv1.AppliedBlock{}) // shard block
+	require.False(t, cache.prune(&antonv1.AppliedBlock{})) // shard block
+}
 
-	current := cache.current()
-	require.NotNil(t, current)
-	require.Equal(t, []byte{1}, current.Boc)
+func TestOnBlockAppliedSkipsShardWithoutInclusionMaster(t *testing.T) {
+	extension, s := testExtension(t)
+	now := uint32(time.Now().Unix())
+	shard := ton.BlockIDExt{
+		Workchain: 0, Shard: -1 << 63, SeqNo: 42,
+		RootHash: bytes.Repeat([]byte{3}, 32), FileHash: bytes.Repeat([]byte{4}, 32),
+	}
+	master := ton.BlockIDExt{
+		Workchain: -1, Shard: -1 << 63, SeqNo: 100,
+		RootHash: bytes.Repeat([]byte{1}, 32), FileHash: bytes.Repeat([]byte{2}, 32),
+	}
+
+	require.NoError(t, extension.OnBlockApplied(context.Background(), hooks.BlockAppliedEvent{
+		BlockBOC: []byte{1}, BlockRoot: cell.BeginCell().EndCell(),
+		Meta: &storage.BlockMeta{ID: shard, GenUTime: now},
+	}))
+	require.NoError(t, extension.OnBlockApplied(context.Background(), hooks.BlockAppliedEvent{
+		BlockBOC: []byte{1}, BlockRoot: cell.BeginCell().EndCell(),
+		Meta: &storage.BlockMeta{ID: master, GenUTime: now},
+	}))
+
+	info, err := s.Info(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), info.State.Msgs, "a shard no master includes is not indexable")
+	require.NotNil(t, storedBlock(t, s, "gton.blocks.100.master"))
 }

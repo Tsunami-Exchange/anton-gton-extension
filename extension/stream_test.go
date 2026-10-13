@@ -123,3 +123,25 @@ func TestBlockStreamStoresCurrentLibraries(t *testing.T) {
 	require.Equal(t, libraries.Hash, got.Hash)
 	require.Equal(t, libraries.Boc, got.Boc)
 }
+
+func TestBlockStreamOpensAfterEveryBlockExpired(t *testing.T) {
+	dir := t.TempDir()
+	stream := testStream(t, dir)
+	require.NoError(t, stream.publish(context.Background(), testStreamEvent(-1, 100, nil)))
+	// Expiry leaves the stream's last sequence in place with no messages.
+	require.NoError(t, readStream(t, stream).Purge(context.Background()))
+	require.NoError(t, stream.close())
+
+	reopened, err := newBlockStream(context.Background(), streamConfig{host: "127.0.0.1", port: -1, dir: dir, retention: time.Hour})
+	require.NoError(t, err)
+	defer reopened.close()
+	require.Zero(t, reopened.publishedMaster())
+}
+
+func TestBlockStreamOpensWithRetentionShorterThanDuplicateWindow(t *testing.T) {
+	stream, err := newBlockStream(context.Background(), streamConfig{
+		host: "127.0.0.1", port: -1, dir: t.TempDir(), retention: time.Minute,
+	})
+	require.NoError(t, err)
+	require.NoError(t, stream.close())
+}
