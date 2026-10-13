@@ -17,7 +17,7 @@ import (
 	"github.com/xssnick/tonutils-go/tvm/cell"
 )
 
-func TestOnBlockAppliedSkipsCatchUpBlock(t *testing.T) {
+func TestOnBlockAppliedStoresCatchUpBlockUntilAcknowledged(t *testing.T) {
 	store, err := newBlockStore(t.TempDir())
 	require.NoError(t, err)
 	extension := &Extension{store: store, log: zerolog.Nop()}
@@ -37,8 +37,48 @@ func TestOnBlockAppliedSkipsCatchUpBlock(t *testing.T) {
 		},
 	}
 
+	// An hour-old block applied during node catch-up is still news to the
+	// consumer: nothing has been acknowledged yet.
 	require.NoError(t, extension.OnBlockApplied(context.Background(), event))
-	require.Nil(t, store.master(id.SeqNo))
+	require.NotNil(t, store.master(id.SeqNo))
+}
+
+func TestOnBlockAppliedSkipsBlocksAlreadyAcknowledged(t *testing.T) {
+	store, err := newBlockStore(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, store.processedMaster(100))
+	extension := &Extension{store: store, log: zerolog.Nop()}
+	master := ton.BlockIDExt{
+		Workchain: -1,
+		Shard:     -1 << 63,
+		SeqNo:     99,
+		RootHash:  bytes.Repeat([]byte{1}, 32),
+		FileHash:  bytes.Repeat([]byte{2}, 32),
+	}
+	shard := ton.BlockIDExt{
+		Workchain: 0,
+		Shard:     -1 << 63,
+		SeqNo:     42,
+		RootHash:  bytes.Repeat([]byte{3}, 32),
+		FileHash:  bytes.Repeat([]byte{4}, 32),
+	}
+	now := uint32(time.Now().Unix())
+
+	require.NoError(t, extension.OnBlockApplied(context.Background(), hooks.BlockAppliedEvent{
+		BlockBOC: []byte{1}, BlockRoot: cell.BeginCell().EndCell(),
+		Meta: &storage.BlockMeta{ID: master, GenUTime: now},
+	}))
+	require.NoError(t, extension.OnBlockApplied(context.Background(), hooks.BlockAppliedEvent{
+		BlockBOC: []byte{1}, BlockRoot: cell.BeginCell().EndCell(),
+		Meta:               &storage.BlockMeta{ID: shard, GenUTime: now},
+		InclusionMasterRef: &master,
+	}))
+
+	require.Nil(t, store.master(master.SeqNo), "master below the acknowledged seqno is not stored")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err = store.waitBlock(ctx, protoBlockID(shard))
+	require.ErrorIs(t, err, context.DeadlineExceeded, "shard included by it is not stored either")
 }
 
 func TestOnBlockAppliedStoresRawEnvelopeWhenEnrichmentFails(t *testing.T) {

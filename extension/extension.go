@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xssnick/gton/service/hooks"
@@ -17,10 +16,7 @@ import (
 	antonv1 "github.com/Tsunami-Exchange/anton-gton-extension/api/anton/v1"
 )
 
-const (
-	maxMessageSize = 64 << 20
-	liveTailMaxLag = 10 * time.Second
-)
+const maxMessageSize = 64 << 20
 
 type Extension struct {
 	listen string
@@ -81,7 +77,10 @@ func (e *Extension) Close(ctx context.Context) error {
 }
 
 func (e *Extension) OnBlockApplied(_ context.Context, event hooks.BlockAppliedEvent) error {
-	if !isLiveAppliedBlock(event, time.Now()) {
+	// The hook is at-least-once and fires for catch-up blocks too. Store every
+	// block the consumer has not acknowledged, whatever its age: the consumer
+	// syncs from this store alone and must not have to fill gaps elsewhere.
+	if isAcknowledged(event, e.store.acknowledged()) {
 		return nil
 	}
 	envelope, err := appliedBlockEnvelope(event)
@@ -102,9 +101,17 @@ func (e *Extension) OnBlockApplied(_ context.Context, event hooks.BlockAppliedEv
 	return e.store.put(envelope)
 }
 
-func isLiveAppliedBlock(event hooks.BlockAppliedEvent, now time.Time) bool {
-	return event.Meta != nil && event.Meta.GenUTime != 0 &&
-		now.Unix()-int64(event.Meta.GenUTime) <= int64(liveTailMaxLag/time.Second)
+// isAcknowledged reports whether the block belongs to a master the consumer
+// has already committed.
+func isAcknowledged(event hooks.BlockAppliedEvent, acked uint32) bool {
+	if event.Meta == nil {
+		return false
+	}
+	inclusion := event.Meta.ID.SeqNo
+	if event.InclusionMasterRef != nil {
+		inclusion = event.InclusionMasterRef.SeqNo
+	}
+	return inclusion < acked
 }
 
 func (*Extension) OnExternalMessage(context.Context, hooks.ExternalMessageEvent) error {

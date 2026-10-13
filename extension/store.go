@@ -28,6 +28,9 @@ type blockStore struct {
 	blocks  map[string]*storedBlock
 	masters map[uint32]*storedBlock
 	wake    chan struct{}
+	// acked is the first master seqno the consumer has not committed yet;
+	// everything below it has been released and is not worth storing again.
+	acked uint32
 }
 
 func newBlockStore(dir string) (*blockStore, error) {
@@ -217,9 +220,21 @@ func (s *blockStore) latestMaster() *antonv1.AppliedBlock {
 	return proto.Clone(latest.event).(*antonv1.AppliedBlock)
 }
 
+func (s *blockStore) acknowledged() uint32 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.acked
+}
+
 func (s *blockStore) processedMaster(seqNo uint32) error {
 	s.storeMu.Lock()
 	defer s.storeMu.Unlock()
+
+	s.mu.Lock()
+	if seqNo > s.acked {
+		s.acked = seqNo
+	}
+	s.mu.Unlock()
 
 	s.mu.RLock()
 	items := make([]*storedBlock, 0)

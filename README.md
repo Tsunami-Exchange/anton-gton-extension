@@ -8,6 +8,9 @@ gRPC.
 The data flow is stream-first:
 
 1. `OnBlockApplied` copies the borrowed hook data and fsyncs the block store.
+   Every applied block the consumer has not acknowledged is stored, catch-up
+   blocks included: the hook is at-least-once and the consumer syncs from this
+   store alone, so a node restart must not leave gaps.
 2. The gRPC stream replays stored events and tails new full block envelopes.
 3. Anton caches a full master-and-shard bundle before indexing it, so account
    states touched by the block do not require separate network calls.
