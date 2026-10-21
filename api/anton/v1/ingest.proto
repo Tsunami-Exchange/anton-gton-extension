@@ -4,29 +4,6 @@ package anton.v1;
 
 option go_package = "github.com/tonindexer/anton/api/anton/v1;antonv1";
 
-service BlockSource {
-  rpc LookupMaster(MasterRequest) returns (BlockId);
-  rpc WaitMaster(MasterRequest) returns (BlockId);
-  rpc SubscribeAppliedBlocks(MasterRequest) returns (stream AppliedBlock);
-  rpc GetBlock(BlockRequest) returns (AppliedBlock);
-  rpc CurrentMaster(Empty) returns (BlockId);
-  rpc ProcessedMaster(ProcessedMasterRequest) returns (Empty);
-}
-
-message Empty {}
-
-message MasterRequest {
-  uint32 seqno = 1;
-}
-
-message BlockRequest {
-  BlockId block = 1;
-}
-
-message ProcessedMasterRequest {
-  uint32 seqno = 1;
-}
-
 message BlockId {
   int32 workchain = 1;
   int64 shard = 2;
@@ -44,7 +21,17 @@ message AccountState {
   bytes last_transaction_hash = 6;
 }
 
+// GlobalLibraries is a masterchain global library dictionary; it is stored in
+// the GTON_LIBRARIES key-value bucket under its hex hash.
+message GlobalLibraries {
+  bytes hash = 1;
+  bytes boc = 2;
+}
+
 message AppliedBlock {
+  reserved 8;
+  reserved "blockchain_config_boc";
+
   string event_id = 1;
   BlockId block = 2;
   BlockId inclusion_master = 3;
@@ -52,7 +39,9 @@ message AppliedBlock {
   bytes proof_boc = 5;
   repeated BlockId shards = 6;
   repeated AccountState accounts = 7;
-  bytes blockchain_config_boc = 8;
+  // global_libraries_boc is set when the dictionary changed since the last
+  // one the extension stored; the hash is set on every enriched master.
   bytes global_libraries_boc = 9;
   int64 observed_at_unix_milli = 10;
+  bytes global_libraries_hash = 11;
 }

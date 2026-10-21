@@ -1,88 +1,103 @@
 package extension
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xssnick/gton/service/hooks"
 	"github.com/xssnick/gton/service/storage"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	antonv1 "github.com/Tsunami-Exchange/anton-gton-extension/api/anton/v1"
 )
 
 const (
-	maxMessageSize = 64 << 20
-	liveTailMaxLag = 10 * time.Second
+	defaultNATSListen     = "127.0.0.1:4222"
+	defaultNATSDir        = "./data/anton-nats"
+	defaultBlockRetention = 7 * 24 * time.Hour
 )
 
 type Extension struct {
-	listen string
-	store  *blockStore
-	node   *nodeSource
-	log    zerolog.Logger
-
-	listener net.Listener
-	server   *grpc.Server
+	cfg       streamConfig
+	stream    *blockStream
+	libraries *librariesCache
+	log       zerolog.Logger
 }
 
 var _ hooks.Extension = (*Extension)(nil)
 
 func New(node hooks.Node) (hooks.Extension, error) {
-	listen := os.Getenv("GTON_GRPC_LISTEN")
-	if listen == "" {
-		listen = "127.0.0.1:50051"
-	}
-	dir := os.Getenv("GTON_BLOCK_DIR")
-	if dir == "" {
-		dir = "./data/anton-blocks"
-	}
-	store, err := newBlockStore(dir)
+	cfg, err := streamConfigFromEnv()
 	if err != nil {
 		return nil, err
 	}
-	return &Extension{listen: listen, store: store, node: newNodeSource(node.Store, node.Logger), log: node.Logger}, nil
+	cfg.log = node.Logger
+	return &Extension{cfg: cfg, libraries: &librariesCache{}, log: node.Logger}, nil
 }
 
-func (e *Extension) Start(context.Context) error {
-	listener, err := net.Listen("tcp", e.listen)
-	if err != nil {
-		return fmt.Errorf("listen for Anton on %s: %w", e.listen, err)
+func streamConfigFromEnv() (streamConfig, error) {
+	listen := os.Getenv("GTON_NATS_LISTEN")
+	if listen == "" {
+		listen = defaultNATSListen
 	}
-	server := grpc.NewServer(grpc.MaxSendMsgSize(maxMessageSize))
-	antonv1.RegisterBlockSourceServer(server, &sourceServer{store: e.store, node: e.node})
-	e.listener = listener
-	e.server = server
-	go func() { _ = server.Serve(listener) }()
+	host, portText, err := net.SplitHostPort(listen)
+	if err != nil {
+		return streamConfig{}, fmt.Errorf("GTON_NATS_LISTEN: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return streamConfig{}, fmt.Errorf("GTON_NATS_LISTEN port: %w", err)
+	}
+	dir := os.Getenv("GTON_NATS_DIR")
+	if dir == "" {
+		dir = defaultNATSDir
+	}
+	retention := defaultBlockRetention
+	if raw := os.Getenv("GTON_BLOCK_RETENTION"); raw != "" {
+		if retention, err = time.ParseDuration(raw); err != nil {
+			return streamConfig{}, fmt.Errorf("GTON_BLOCK_RETENTION: %w", err)
+		}
+		if retention <= 0 {
+			return streamConfig{}, fmt.Errorf("GTON_BLOCK_RETENTION must be positive, got %s", raw)
+		}
+	}
+	return streamConfig{host: host, port: port, dir: dir, retention: retention}, nil
+}
+
+func (e *Extension) Start(ctx context.Context) error {
+	stream, err := newBlockStream(ctx, e.cfg)
+	if err != nil {
+		return err
+	}
+	e.stream = stream
 	return nil
 }
 
-func (e *Extension) Close(ctx context.Context) error {
-	if e.server == nil {
+func (e *Extension) Close(context.Context) error {
+	if e.stream == nil {
 		return nil
 	}
-	done := make(chan struct{})
-	go func() {
-		e.server.GracefulStop()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		e.server.Stop()
-		return ctx.Err()
-	}
+	return e.stream.close()
 }
 
-func (e *Extension) OnBlockApplied(_ context.Context, event hooks.BlockAppliedEvent) error {
-	if !isLiveAppliedBlock(event, time.Now()) {
+func (e *Extension) OnBlockApplied(ctx context.Context, event hooks.BlockAppliedEvent) error {
+	// The hook is at-least-once and fires for catch-up blocks too. Publish
+	// every block of a master the stream does not hold yet, whatever its age:
+	// consumers sync from the stream alone and must not fill gaps elsewhere.
+	if isPublished(event, e.stream.publishedMaster()) {
+		return nil
+	}
+	if event.Meta != nil && !isMasterBlock(event.Meta.ID) && event.InclusionMasterRef == nil {
+		// Consumers index shards by the master that includes them; without
+		// one the block cannot be placed in the stream.
+		e.log.Warn().Str("block", storage.FormatBlockRef(event.Meta.ID)).
+			Msg("applied shard block has no inclusion master; skipping extension event")
 		return nil
 	}
 	envelope, err := appliedBlockEnvelope(event)
@@ -98,14 +113,45 @@ func (e *Extension) OnBlockApplied(_ context.Context, event hooks.BlockAppliedEv
 			logEvent.Msg("failed to build applied block envelope; skipping extension event")
 			return nil
 		}
-		logEvent.Msg("failed to enrich applied block; storing partial event")
+		logEvent.Msg("failed to enrich applied block; publishing partial event")
 	}
-	return e.store.put(envelope)
+	return e.publish(ctx, envelope)
 }
 
-func isLiveAppliedBlock(event hooks.BlockAppliedEvent, now time.Time) bool {
-	return event.Meta != nil && event.Meta.GenUTime != 0 &&
-		now.Unix()-int64(event.Meta.GenUTime) <= int64(liveTailMaxLag/time.Second)
+// publish stores a changed library dictionary and the envelope. The
+// dictionary is recorded only once both are stored, so a failed attempt is
+// retried with the dictionary body.
+func (e *Extension) publish(ctx context.Context, envelope *antonv1.AppliedBlock) error {
+	librariesChanged := e.libraries.prune(envelope)
+	if librariesChanged {
+		if err := e.stream.putLibraries(ctx, &antonv1.GlobalLibraries{
+			Hash: envelope.GlobalLibrariesHash,
+			Boc:  envelope.GlobalLibrariesBoc,
+		}); err != nil {
+			return err
+		}
+	}
+	if err := e.stream.publish(ctx, envelope); err != nil {
+		return err
+	}
+	if librariesChanged {
+		e.libraries.record(envelope)
+	}
+	return nil
+}
+
+// isPublished reports whether the block belongs to a master older than the
+// latest one already in the stream. Repeats of the latest master itself are
+// dropped by the stream's duplicate window.
+func isPublished(event hooks.BlockAppliedEvent, published uint32) bool {
+	if event.Meta == nil {
+		return false
+	}
+	inclusion := event.Meta.ID.SeqNo
+	if event.InclusionMasterRef != nil {
+		inclusion = event.InclusionMasterRef.SeqNo
+	}
+	return inclusion < published
 }
 
 func (*Extension) OnExternalMessage(context.Context, hooks.ExternalMessageEvent) error {
@@ -116,74 +162,33 @@ func (*Extension) OnBlockReceived(context.Context, hooks.BlockReceivedEvent) err
 	return nil
 }
 
-type sourceServer struct {
-	antonv1.UnimplementedBlockSourceServer
-	store *blockStore
-	node  *nodeSource
+// librariesCache remembers the hash of the global library dictionary last
+// stored in the libraries bucket, so unchanged dictionaries are not repeated in
+// every envelope.
+type librariesCache struct {
+	mu   sync.Mutex
+	hash []byte
 }
 
-var _ antonv1.BlockSourceServer = (*sourceServer)(nil)
-
-func (s *sourceServer) LookupMaster(_ context.Context, request *antonv1.MasterRequest) (*antonv1.BlockId, error) {
-	event := s.store.master(request.Seqno)
-	if event == nil {
-		return nil, status.Error(codes.NotFound, "master block is not available")
+// prune strips the dictionary body from a master envelope when that
+// dictionary is already stored, and reports whether the envelope carries one
+// that still has to be stored.
+func (c *librariesCache) prune(event *antonv1.AppliedBlock) bool {
+	if len(event.GlobalLibrariesHash) == 0 {
+		return false
 	}
-	return event.Block, nil
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if bytes.Equal(event.GlobalLibrariesHash, c.hash) {
+		event.GlobalLibrariesBoc = nil
+		return false
+	}
+	return len(event.GlobalLibrariesBoc) != 0
 }
 
-func (s *sourceServer) WaitMaster(ctx context.Context, request *antonv1.MasterRequest) (*antonv1.BlockId, error) {
-	event, err := s.store.waitMaster(ctx, request.Seqno)
-	if err != nil {
-		return nil, err
-	}
-	return event.Block, nil
-}
-
-func (s *sourceServer) SubscribeAppliedBlocks(request *antonv1.MasterRequest, stream grpc.ServerStreamingServer[antonv1.AppliedBlock]) error {
-	return s.subscribe(stream.Context(), request.Seqno, stream.Send)
-}
-
-// subscribe replays masters the store never saw from the node database, then
-// tails the store. Without replay a consumer that restarts behind the live
-// window has to rebuild every missing block through liteservers.
-func (s *sourceServer) subscribe(ctx context.Context, seqNo uint32, send func(*antonv1.AppliedBlock) error) error {
-	if s.node != nil {
-		var err error
-		seqNo, err = s.node.replay(ctx, seqNo, s.store.earliestMaster, send)
-		if err != nil {
-			return err
-		}
-	}
-	return s.store.subscribe(ctx, seqNo, send)
-}
-
-func (s *sourceServer) GetBlock(ctx context.Context, request *antonv1.BlockRequest) (*antonv1.AppliedBlock, error) {
-	if request == nil || validateBlockID(request.Block) != nil {
-		return nil, status.Error(codes.InvalidArgument, "valid block id is required")
-	}
-	if event := s.store.block(request.Block); event != nil {
-		return event, nil
-	}
-	if s.node != nil {
-		if event, err := s.node.appliedBlock(ctx, blockIDFromProto(request.Block)); err == nil {
-			return event, nil
-		}
-	}
-	return s.store.waitBlock(ctx, request.Block)
-}
-
-func (s *sourceServer) CurrentMaster(context.Context, *antonv1.Empty) (*antonv1.BlockId, error) {
-	event := s.store.latestMaster()
-	if event == nil {
-		return nil, status.Error(codes.NotFound, "master block is not available")
-	}
-	return event.Block, nil
-}
-
-func (s *sourceServer) ProcessedMaster(_ context.Context, request *antonv1.ProcessedMasterRequest) (*antonv1.Empty, error) {
-	if err := s.store.processedMaster(request.Seqno); err != nil {
-		return nil, status.Errorf(codes.Internal, "release processed blocks: %v", err)
-	}
-	return &antonv1.Empty{}, nil
+// record marks the envelope's dictionary as stored.
+func (c *librariesCache) record(event *antonv1.AppliedBlock) {
+	c.mu.Lock()
+	c.hash = bytes.Clone(event.GlobalLibrariesHash)
+	c.mu.Unlock()
 }

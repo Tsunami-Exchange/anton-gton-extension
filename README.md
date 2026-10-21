@@ -1,36 +1,46 @@
 # Anton gton extension
 
 This repository builds a gton node binary with an Anton block-source
-extension. The extension writes every applied block to a local durable store
-before returning from the gton hook and serves complete blocks to Anton over
-gRPC.
+extension. The extension runs an embedded NATS JetStream server and publishes
+every applied block to it before returning from the gton hook. Consumers read
+the stream over the NATS protocol; the extension knows nothing about them.
 
-The data flow is stream-first:
+The data flow:
 
-1. `OnBlockApplied` copies the borrowed hook data and fsyncs the block store.
-2. The gRPC stream replays stored events and tails new full block envelopes.
-3. Anton caches a full master-and-shard bundle before indexing it, so account
-   states touched by the block do not require separate network calls.
-4. A subscription that starts behind the live window is replayed from the
-   node database first: masters from the requested seqno up to the oldest
-   stored one, each preceded by its top shard blocks, then the stream tails
-   the store. Blocks the node no longer holds end the replay early.
-5. Missing or historical blocks fall back to the unary gRPC API, which also
-   reads from the node database, and then to Anton's existing liteservers.
-6. After committing a master block, Anton acknowledges the seqno. The store
-   keeps that latest committed master bundle and removes older bundles.
+1. `OnBlockApplied` copies the borrowed hook data into an `AppliedBlock`
+   envelope and publishes it to the `GTON_BLOCKS` stream. Every block of a
+   master the stream does not hold yet is published, catch-up blocks included:
+   the hook is at-least-once and consumers sync from the stream alone, so a
+   node restart must not leave gaps. Repeats of the latest master are dropped
+   by the stream's duplicate window keyed on the event id.
+2. Messages are published as `gton.blocks.<master seqno>.master` and
+   `gton.blocks.<master seqno>.shard`, where the seqno is the master that
+   includes the block. gton applies a master and then the shard blocks it
+   includes, so master N comes first, followed by its shards, and master N is
+   complete once `gton.blocks.N+1.master` arrives. A consumer that has
+   committed master N resumes from the first message of `gton.blocks.N+1.>`.
+   Every message carries the `Gton-Master-Seqno` header.
+3. The stream keeps blocks for `GTON_BLOCK_RETENTION` regardless of who
+   consumed them. Any number of consumers can read it with their own cursors.
 
-The event contains the raw block and proof BOCs, block identity, inclusion
-master, master shard list, all transaction-account states, blockchain config,
-and global libraries. Anton keeps its liteclient as a fallback for history and
-for related contracts not touched by the block.
+The envelope contains the raw block and proof BOCs, block identity, inclusion
+master, master shard list and all transaction-account states. A master event
+also carries the hash of the global library dictionary, and its BOC when the
+dictionary changed since the last one the extension stored (always for the
+first master after a node restart). Every dictionary is stored in the
+`GTON_LIBRARIES` key-value bucket under its hex hash, so a consumer replaying
+an old master looks up that master's dictionary.
+
+Writes are fsynced before the hook returns, and messages up to 64 MB are
+accepted. A publish error is returned to gton, which retries the block flow,
+so a full disk stalls the node until space is freed.
 
 ## Versions
 
 The repositories intentionally have independent dependency graphs:
 
 - Anton: Go 1.24, tonutils-go 1.13.
-- This extension: Go 1.26, gton 0.7, gton's tonutils-go version.
+- This extension: Go 1.26, gton 1.0, gton's tonutils-go version.
 
 ## Build
 
@@ -38,13 +48,14 @@ The repositories intentionally have independent dependency graphs:
 
 ## Configuration
 
-- `GTON_GRPC_LISTEN` — gRPC listen address; defaults to
-  `127.0.0.1:50051`.
-- `GTON_BLOCK_DIR` — durable block directory; defaults to
-  `./data/anton-blocks`.
+- `GTON_NATS_LISTEN` — NATS listen address; defaults to `127.0.0.1:4222`.
+- `GTON_NATS_DIR` — JetStream store directory; defaults to
+  `./data/anton-nats`.
+- `GTON_BLOCK_RETENTION` — how long blocks stay in the stream; a Go duration,
+  defaults to `168h`.
 
-Start Anton with `GTON_SOURCE_ADDR=127.0.0.1:50051`. If Anton runs in another
-container, explicitly set `GTON_GRPC_LISTEN=:50051` and keep both services on a
-trusted private network; the transport does not provide TLS or authentication.
+If the consumer runs on another host, set `GTON_NATS_LISTEN=:4222` and keep
+both on a trusted private network; the embedded server runs without TLS or
+authentication.
 
-The protobuf contract is mirrored from Anton's api/anton/v1/ingest.proto.
+The protobuf envelope is mirrored from Anton's api/anton/v1/ingest.proto.

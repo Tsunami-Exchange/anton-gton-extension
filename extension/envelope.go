@@ -19,42 +19,23 @@ func appliedBlockEnvelope(event hooks.BlockAppliedEvent) (*antonv1.AppliedBlock,
 	if event.Meta == nil {
 		return nil, fmt.Errorf("applied block metadata is missing")
 	}
-	return blockEnvelope(event.Meta.ID, event.BlockBOC, event.ProofBOC, event.BlockRoot, event.CurrentState, event.InclusionMasterRef)
-}
-
-// blockEnvelope builds the Anton event for one applied block. The inputs are
-// exactly what the apply hook hands over, so the same builder serves blocks
-// read back from the node database for replay.
-func blockEnvelope(id ton.BlockIDExt, blockBOC, proofBOC []byte, blockRoot, stateRoot *cell.Cell, inclusionMaster *ton.BlockIDExt) (*antonv1.AppliedBlock, error) {
+	id := event.Meta.ID
 	envelope := &antonv1.AppliedBlock{
 		EventId:             fmt.Sprintf("%d:%d:%d:%x", id.Workchain, id.Shard, id.SeqNo, id.RootHash),
 		Block:               protoBlockID(id),
-		BlockBoc:            bytes.Clone(blockBOC),
-		ProofBoc:            bytes.Clone(proofBOC),
+		BlockBoc:            bytes.Clone(event.BlockBOC),
+		ProofBoc:            bytes.Clone(event.ProofBOC),
 		ObservedAtUnixMilli: time.Now().UnixMilli(),
 	}
-	if inclusionMaster != nil {
-		envelope.InclusionMaster = protoBlockID(*inclusionMaster)
+	if event.InclusionMasterRef != nil {
+		envelope.InclusionMaster = protoBlockID(*event.InclusionMasterRef)
 	}
 
-	block, err := storage.ParseVerifiedBlockCell(id, blockRoot)
+	block, err := storage.ParseVerifiedBlockCell(id, event.BlockRoot)
 	if err != nil {
 		return envelope, fmt.Errorf("parse applied block: %w", err)
 	}
-	master := id.Workchain == -1 && id.Shard == -1<<63
-	if master {
-		// Shards come from the block itself, so a partial envelope still tells
-		// the consumer which shard blocks to expect even if the state fails.
-		shards, err := masterBlockShards(block)
-		if err != nil {
-			return envelope, fmt.Errorf("load masterchain shards: %w", err)
-		}
-		envelope.Shards = make([]*antonv1.BlockId, 0, len(shards))
-		for _, shard := range shards {
-			envelope.Shards = append(envelope.Shards, protoBlockID(*shard))
-		}
-	}
-	state, err := appliedShardState(stateRoot)
+	state, err := appliedShardState(event.CurrentState)
 	if err != nil {
 		return envelope, fmt.Errorf("parse applied state: %w", err)
 	}
@@ -74,8 +55,8 @@ func blockEnvelope(id ton.BlockIDExt, blockBOC, proofBOC []byte, blockRoot, stat
 	}
 
 	envelope.Accounts = accounts
-	if master {
-		if err = addMasterData(state, envelope); err != nil {
+	if id.Workchain == -1 && id.Shard == -1<<63 {
+		if err = addMasterData(block, state, envelope); err != nil {
 			return envelope, err
 		}
 	}
@@ -83,22 +64,22 @@ func blockEnvelope(id ton.BlockIDExt, blockBOC, proofBOC []byte, blockRoot, stat
 	return envelope, nil
 }
 
-func addMasterData(state *tlb.ShardStateUnsplit, envelope *antonv1.AppliedBlock) error {
-	extra, err := masterStateExtra(state)
+func addMasterData(block *tlb.Block, state *tlb.ShardStateUnsplit, envelope *antonv1.AppliedBlock) error {
+	shards, err := masterBlockShards(block)
 	if err != nil {
-		return fmt.Errorf("load masterchain state extra: %w", err)
+		return fmt.Errorf("load masterchain shards: %w", err)
 	}
-	config, err := tlb.ToCell(extra.ConfigParams.Config.Params)
-	if err != nil {
-		return fmt.Errorf("serialize blockchain config: %w", err)
+	envelope.Shards = make([]*antonv1.BlockId, 0, len(shards))
+	for _, shard := range shards {
+		envelope.Shards = append(envelope.Shards, protoBlockID(*shard))
 	}
-	envelope.BlockchainConfigBoc = config.ToBOC()
 
 	libraries, err := globalLibraries(state)
 	if err != nil {
 		return fmt.Errorf("load global libraries: %w", err)
 	}
 	if libraries != nil && libraries.AsCell() != nil {
+		envelope.GlobalLibrariesHash = libraries.AsCell().Hash()
 		envelope.GlobalLibrariesBoc = libraries.AsCell().ToBOC()
 	}
 	return nil
@@ -161,21 +142,6 @@ func appliedAccountState(state *tlb.ShardStateUnsplit, workchain int32, accountI
 		account.StateBoc = shardAccount.Account.ToBOC()
 	}
 	return account, nil
-}
-
-func masterStateExtra(state *tlb.ShardStateUnsplit) (*tlb.McStateExtra, error) {
-	if state.McStateExtra == nil {
-		return nil, fmt.Errorf("state is missing mc_state_extra")
-	}
-	loader, err := state.McStateExtra.BeginParse()
-	if err != nil {
-		return nil, err
-	}
-	var extra tlb.McStateExtra
-	if err = tlb.LoadFromCell(&extra, loader); err != nil {
-		return nil, err
-	}
-	return &extra, nil
 }
 
 func globalLibraries(state *tlb.ShardStateUnsplit) (*cell.Dictionary, error) {
